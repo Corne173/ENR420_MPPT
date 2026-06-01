@@ -23,10 +23,13 @@
 \usepackage{subcaption}
 \usepackage{float}
 
-% Tables
+% Tables and lists
 \usepackage{array}
 \usepackage{booktabs}
 \usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{listings}
 
 % Headers, links, and headings
 \usepackage{fancyhdr}
@@ -41,6 +44,7 @@
 \definecolor{UPLight}{HTML}{EEF5F8}
 \definecolor{TableHead}{HTML}{DCEAF0}
 \definecolor{TableRule}{HTML}{6E8FA3}
+\definecolor{CodeBack}{HTML}{F6F8FA}
 
 \hypersetup{
   colorlinks=true,
@@ -48,18 +52,34 @@
   urlcolor=UPBlue,
   citecolor=UPBlue,
   pdfauthor={Department of Electrical, Electronic and Computer Engineering},
-  pdftitle={MPPT Circuit User Manual},
+  pdftitle={MPPT Circuit Student Implementation Guide},
   pdfsubject={Module ENR 420},
-  pdfkeywords={MPPT, four-switch buck-boost converter, solar panels, STM32}
+  pdfkeywords={MPPT, four-switch buck-boost converter, solar panels, STM32, CubeMX}
 }
 \urlstyle{same}
 
 \graphicspath{{fig/}}
 \captionsetup{font=small,labelfont={bf,color=UPBlue},labelsep=colon,skip=4pt}
 \renewcommand{\arraystretch}{1.24}
-\setlength{\tabcolsep}{7pt}
+\setlength{\tabcolsep}{6pt}
 \newcolumntype{Y}{>{\RaggedRight\arraybackslash}X}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\setlist[itemize]{leftmargin=*,topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{leftmargin=*,topsep=2pt,itemsep=2pt}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{CodeBack},
+  frame=single,
+  rulecolor=\color{TableRule},
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  tabsize=2,
+  xleftmargin=1mm,
+  xrightmargin=1mm
+}
 
 \titleformat{\section}
   {\Large\bfseries\color{UPBlue}}
@@ -67,12 +87,16 @@
 \titleformat{\subsection}
   {\large\bfseries\color{UPBlue}}
   {\thesubsection}{0.65em}{}
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\color{UPBlue}}
+  {\thesubsubsection}{0.65em}{}
 \titlespacing*{\section}{0pt}{1.2em}{0.55em}
 \titlespacing*{\subsection}{0pt}{1.0em}{0.35em}
+\titlespacing*{\subsubsection}{0pt}{0.75em}{0.25em}
 
 \pagestyle{fancy}
 \fancyhf{}
-\lhead{\small MPPT Circuit User Manual}
+\lhead{\small MPPT Circuit Student Implementation Guide}
 \rhead{\small Module ENR 420}
 \cfoot{\small Page \thepage\ of \pageref*{LastPage}}
 \renewcommand{\headrulewidth}{0.4pt}
@@ -81,6 +105,39 @@
 \newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\Vout}{V_{o}}
 \newcommand{\Vin}{V_{\mathrm{in}}}
+\newcommand{\Vadc}{V_{\mathrm{ADC}}}
+\newcommand{\Vref}{V_{\mathrm{REF}}}
+\newcommand{\Pin}{P_{\mathrm{PV}}}
+\newcommand{\Iin}{I_{\mathrm{in}}}
+\newcommand{\Iout}{I_{\mathrm{o}}}
+\newcommand{\Vpv}{V_{\mathrm{PV}}}
+
+\let\originalsection\section
+\renewcommand{\section}{\clearpage\originalsection}
+
+\newtcolorbox{guidebox}[1]{
+  colback=UPLight,
+  colframe=UPBlue,
+  boxrule=0.8pt,
+  arc=1.5mm,
+  left=4mm,right=4mm,top=3mm,bottom=3mm,
+  title=\textbf{#1},
+  coltitle=white,
+  colbacktitle=UPBlue,
+  fonttitle=\bfseries
+}
+
+\newtcolorbox{warnbox}[1]{
+  colback=white,
+  colframe=UPAccent,
+  boxrule=0.9pt,
+  arc=1.5mm,
+  left=4mm,right=4mm,top=3mm,bottom=3mm,
+  title=\textbf{#1},
+  coltitle=black,
+  colbacktitle=UPAccent!35,
+  fonttitle=\bfseries
+}
 
 \begin{document}
 \hypersetup{pageanchor=false}
@@ -94,7 +151,7 @@
   \vspace{12mm}
   \includegraphics[width=0.72\textwidth]{up_logo.jpeg}\par
   \vspace{16mm}
-  {\Huge\bfseries\color{UPBlue} MPPT Circuit User Manual\par}
+  {\Huge\bfseries\color{UPBlue} MPPT Circuit Student Implementation Guide\par}
   \vspace{4mm}
   {\large Copyright reserved\par}
   \vspace{14mm}
@@ -103,12 +160,12 @@
   \begin{tcolorbox}[
     colback=UPLight,
     colframe=UPBlue,
-    width=0.82\textwidth,
+    width=0.86\textwidth,
     boxrule=0.9pt,
     arc=1.5mm,
     left=5mm,right=5mm,top=4mm,bottom=4mm]
     \centering
-    A concise guide to the MPPT circuit, PCB connections, sensing interfaces, and microcontroller pin mapping used in Practicals 1 and 3.
+    A practical guide to the MPPT circuit, sensing interfaces, gate-driver control, STM32 pin mapping, firmware architecture, and safe laboratory bring-up used in Practicals 1 and 3.
   \end{tcolorbox}
   \vspace*{10mm}
 \end{titlepage}
@@ -120,11 +177,47 @@
 \pagenumbering{arabic}
 \pagestyle{fancy}
 
-\section{Overview}
+\section{How This Guide Should Be Used}
 
-Maximum power point tracking (MPPT) is necessary to ensure that solar panels can operate at their maximum efficiency and produce maximum possible power under changing conditions. To implement MPPT, a DC-DC converter is required, which can be controlled by a microcontroller running an MPPT algorithm. Students will be provided with a circuit and a microcontroller to use for Practicals 1 and 3. This document will serve as a guide for how to use the circuit.
+This document is written for final-year electrical engineering students who must understand the MPPT hardware well enough to program the \href{https://www.st.com/en/evaluation-tools/nucleo-f303k8.html}{STM32 NUCLEO-F303K8} microcontroller. It is not intended to be a finished firmware solution. It gives the circuit behaviour, signal meanings, conversion equations, configuration choices, staged bring-up procedure, and implementation structure that you need in order to build and test your own firmware.
 
-Figure~\ref{fig:system-block-diagram} shows a block diagram of the overall system, which consists of an MPPT circuit which draws power from the solar panels at the input, and outputs power to a battery and a load. The MPPT circuit outputs the solar panel voltage and current, battery voltage and current, and load current to the microcontroller, which determines the operating point of the system, and controls the circuit using PWM, disable and load enable signals. For Practical 1 and 3, two series connected Model YLM-J 3.0 PRO solar panels will be connected as the input to the circuit. In Practical 3, a particle swarm optimisation (PSO) MPPT algorithm will be implemented on the microcontroller.
+\begin{guidebox}{Learning outcomes}
+After working through this guide you should be able to:
+\begin{itemize}
+  \item explain how the four-switch buck-boost converter changes the solar-panel operating point;
+  \item identify each PCB signal connected to the STM32 and configure the matching GPIO, ADC, UART, and timer peripherals;
+  \item convert raw ADC counts into voltage, current, power, temperature, and irradiance values;
+  \item generate safe complementary PWM signals with dead time and disable control;
+  \item implement a staged MPPT control loop that starts safely, checks measurements, limits duty cycles, and handles faults;
+  \item verify the firmware in the laboratory before connecting the full solar-panel and battery system.
+\end{itemize}
+\end{guidebox}
+
+\subsection{Assumed background}
+
+You are expected to know the basic operation of DC-DC converters, MOSFET switching, PWM, ADC sampling, UART communication, and C programming. The guide fills in the project-specific details: which signals exist on this PCB, how the sensor outputs relate to physical units, and how the STM32 firmware should be organised around the hardware.
+
+\subsection{Required tools and references}
+
+Students should have access to:
+\begin{itemize}
+  \item \href{https://www.st.com/en/development-tools/stm32cubeide}{STM32CubeIDE}, downloaded from the official STMicroelectronics page, or STM32CubeMX with an STM32F303K8 project;
+  \item the STM32 NUCLEO-F303K8 board and the MPPT PCB;
+  \item a current-limited bench supply for early bring-up;
+  \item an oscilloscope with suitable probes for PWM and low-voltage signal checks;
+  \item a multimeter for continuity, polarity, and static voltage checks;
+  \item the component references listed in Section~\ref{sec:resources}.
+\end{itemize}
+
+\begin{warnbox}{Safe laboratory sequence}
+Do not connect the solar panels, battery, or load during first firmware testing. First confirm that the STM32 boots, the gate-driver disable pins keep switching disabled, ADC readings are plausible, and PWM waveforms are correct on an oscilloscope. Only then proceed to current-limited converter testing.
+\end{warnbox}
+
+\section{System Overview}
+
+Maximum power point tracking (MPPT) allows a photovoltaic (PV) source to operate near the point where the product of panel voltage and panel current is maximised. The microcontroller cannot command the sun or the panel directly. It changes the duty cycle of a DC-DC converter, which changes the electrical load seen by the PV panels. The MPPT algorithm observes the resulting panel voltage and current, estimates $\Pin=\Vpv\Iin$, and adjusts the converter command until the operating point is close to the maximum power point.
+
+Figure~\ref{fig:system-block-diagram} shows the complete system. The MPPT PCB draws power from two series-connected \href{https://www.offgridtec.com/media/product_attachements/YingliSolar_410W\%20YLM-J\%203.0\%20PRO_Datasheet.pdf}{Model YLM-J 3.0 PRO solar panels} and delivers power to the output terminals. The output may be connected to a battery and/or load according to the practical setup. The microcontroller measures the PV-side and output-side electrical quantities, reads temperature and irradiance where required, and controls the converter using PWM, gate-driver disable, shoot-through protection, and load-enable signals.
 
 \begin{figure}[H]
   \centering
@@ -133,9 +226,15 @@ Figure~\ref{fig:system-block-diagram} shows a block diagram of the overall syste
   \label{fig:system-block-diagram}
 \end{figure}
 
+\begin{guidebox}{Control objective}
+For Practical 3, the controller should search for the PV operating point that gives the highest measured input power, $\Pin=\Vpv\Iin$, while keeping converter voltage, current, duty cycle, temperature, and communication conditions inside safe limits.
+\end{guidebox}
+
 \section{Circuit Description}
 
-The DC-DC converter circuit is a four-switch buck-boost (4SBB) converter. The converter can step the input voltage up or down, ensuring that the maximum power point can be tracked for diverse loads, conditions, and solar panel configurations. Compared to a conventional buck-boost converter, the 4SBB provides a non-inverted voltage polarity at the output and achieves higher efficiencies. A basic circuit diagram is shown in Figure~\ref{fig:four-switch-buck-boost}.
+\subsection{Four-switch buck-boost converter}
+
+The DC-DC converter is a four-switch buck-boost (4SBB) converter. The converter can step the input voltage down or up, allowing the controller to track the maximum power point under different irradiance, temperature, battery, and load conditions. Compared with a conventional inverting buck-boost converter, the 4SBB keeps the output polarity non-inverted and can operate efficiently in buck, boost, and buck-boost regions.
 
 \begin{figure}[H]
   \centering
@@ -144,17 +243,26 @@ The DC-DC converter circuit is a four-switch buck-boost (4SBB) converter. The co
   \label{fig:four-switch-buck-boost}
 \end{figure}
 
-Switch 1 and switch 2 operate with complementary duty cycles of $D_1$ and $1-D_1$ respectively, while switch 3 and switch 4 operate with duty cycles of $D_2$ and $1-D_2$ respectively. Switch 1 and switch 3 operate in phase.
+SW1 and SW2 form the buck half bridge. SW3 and SW4 form the boost half bridge. The inductor transfers energy between the input side and the output side. The input and output capacitors reduce switching ripple and provide local energy storage.
 
-The voltage gain of the converter is given by
+Switch 1 and switch 2 operate with complementary duty cycles of $D_1$ and $1-D_1$. Switch 3 and switch 4 operate with duty cycles of $D_2$ and $1-D_2$. The ideal continuous-conduction voltage gain is
 \begin{equation}
   \frac{\Vout}{\Vin}=\frac{D_1}{1-D_2}.
   \label{eq:voltage-gain}
 \end{equation}
 
-By setting $D_2=0$ (SW4 is closed and SW3 is open), the converter acts as a buck converter with a voltage gain of $D_1$. With $D_1=1$ (SW1 is closed and SW2 is open), the converter acts as a boost converter with a gain of $1/(1-D_2)$. When $D_1=D_2=D$, the converter acts as a buck-boost converter with a gain of $D/(1-D)$. SW1 and SW2 form the buck side of the converter, while SW3 and SW4 form the boost side of the converter.
+The useful operating cases are:
+\begin{itemize}
+  \item \textbf{Buck mode}: set $D_2=0$. SW4 remains on, SW3 remains off, and the gain is approximately $D_1$.
+  \item \textbf{Boost mode}: set $D_1=1$. SW1 remains on, SW2 remains off, and the gain is approximately $1/(1-D_2)$.
+  \item \textbf{Buck-boost mode}: set both sides to switch, for example $D_1=D_2=D$, giving a gain of approximately $D/(1-D)$.
+\end{itemize}
 
-The maximum voltage and current ratings of the circuit are given in Table~\ref{tab:max-ratings}.
+The firmware should not jump directly between extreme duty cycles. Use limited duty-cycle ranges, ramp commands gradually during startup, and stop switching immediately when a fault is detected.
+
+\subsection{Ratings and component values}
+
+The maximum ratings of the circuit are given in Table~\ref{tab:max-ratings}. These are hardware limits, not firmware targets. The controller must operate below these values and should include margin.
 
 \begin{table}[H]
   \centering
@@ -172,7 +280,7 @@ The maximum voltage and current ratings of the circuit are given in Table~\ref{t
   \end{tabularx}
 \end{table}
 
-The component values used for the inductor and capacitors are given in Table~\ref{tab:component-values}. The circuit is designed for $250\,\mathrm{kHz}$ switching.
+The component values used for the inductor and capacitors are given in Table~\ref{tab:component-values}. The circuit is designed for a switching frequency of $250\,\mathrm{kHz}$.
 
 \begin{table}[H]
   \centering
@@ -189,9 +297,70 @@ The component values used for the inductor and capacitors are given in Table~\re
   \end{tabularx}
 \end{table}
 
+At $250\,\mathrm{kHz}$, one PWM period is
+\begin{equation}
+  T_s=\frac{1}{250\,000}=4\,\mu\mathrm{s}.
+\end{equation}
+The commanded duty cycles therefore change the relative on-time of MOSFETs within a $4\,\mu\mathrm{s}$ switching period. A dead time of $100\,\mathrm{ns}$ is small compared with the full period, but it is essential because it prevents the high-side and low-side devices in the same half bridge from being on at the same time.
+
+\subsection{How MPPT affects the PV panel}
+
+A PV panel has a nonlinear current-voltage curve. At open circuit, current is near zero and power is zero. At short circuit, voltage is near zero and power is also near zero. The maximum power point lies between these extremes. The converter duty cycle changes the effective input resistance presented to the PV panels, so a change in duty cycle produces a change in $\Vpv$, $\Iin$, and $\Pin$.
+
+For implementation, the important rule is simple:
+\begin{equation}
+  \Pin[k] = \Vpv[k]\,\Iin[k].
+\end{equation}
+The MPPT algorithm should perturb or choose converter commands, wait for the electrical response to settle, measure $\Vpv$ and $\Iin$, and compare the new power with previous candidates.
+
+\section{Safety and Operating Envelope}
+
+The practical system can involve high DC voltage, high current, large capacitors, a battery, and outdoor PV panels. Firmware errors can therefore damage hardware. The first goal of the firmware is safe control. MPPT performance comes after safe startup, measurement sanity checks, and fault handling.
+
+\subsection{Panel operating expectations}
+
+Two series-connected YLM-J 3.0 PRO modules can produce an open-circuit voltage in the region of twice the single-module open-circuit voltage. A typical YLM-J 3.0 PRO 390--415 W module has $V_{\mathrm{MPP}}$ around $30$--$31\,\mathrm{V}$, $I_{\mathrm{MPP}}$ around $13\,\mathrm{A}$, and $V_{\mathrm{OC}}$ around $37\,\mathrm{V}$ at standard test conditions. Two modules in series therefore place the expected maximum-power voltage near $60$--$62\,\mathrm{V}$ and open-circuit voltage near $74\,\mathrm{V}$ before temperature corrections. This is below the PCB input-voltage rating, but it is still hazardous and must be treated as a high-energy DC source.
+
+\subsection{Do not energise until}
+
+\begin{warnbox}{Pre-power checklist}
+\begin{itemize}
+  \item The STM32 is programmed and can enter a safe idle state.
+  \item \code{BCK\_DIS} and \code{BST\_DIS} are driven to the disabled state during reset and startup.
+  \item The PWM pins have been checked on an oscilloscope with the power stage not energised.
+  \item Complementary PWM pairs include dead time and never overlap.
+  \item ADC readings for voltage and current channels have been checked against known low-voltage or zero-current conditions.
+  \item The output load or battery connection has correct polarity and is appropriate for the practical setup.
+  \item A supervisor has approved the transition from bench-supply testing to PV/battery testing.
+\end{itemize}
+\end{warnbox}
+
+\subsection{Firmware fault limits}
+
+Use conservative limits in early tests. The values in Table~\ref{tab:fault-limits} are suggested starting limits for firmware development and should be confirmed by the demonstrator for the final practical setup.
+
+\begin{table}[H]
+  \centering
+  \caption{Suggested firmware fault limits for bring-up}
+  \label{tab:fault-limits}
+  \begin{tabularx}{\textwidth}{@{}L{0.23\textwidth} L{0.22\textwidth} Y@{}}
+    \toprule
+    \rowcolor{TableHead}\textbf{Quantity} & \textbf{Initial action limit} & \textbf{Firmware action} \\
+    \midrule
+    Input voltage & Below hardware rating with margin & Disable PWM if the measured value exceeds the approved practical limit. \\
+    Input current & Current-limited during first tests & Disable PWM and log a fault if the input current rises unexpectedly. \\
+    Output voltage & Below battery/load rating & Disable PWM if output voltage is too high or inconsistent with the load. \\
+    Output current & Below practical limit & Disable PWM on overcurrent or negative current if not expected by the test. \\
+    Duty cycle & Keep away from 0\% and 100\% & Clamp commands and ramp slowly. \\
+    Temperature & Below approved thermal limit & Reduce power or stop switching. \\
+    Sensor validity & ADC and UART values plausible & Do not run MPPT from invalid measurements. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
 \section{Printed Circuit Board Configuration}
 
-A printed circuit board (PCB) has been designed and manufactured for the MPPT circuit. The circuit includes voltage and current sensors for the input and output. Additionally, the circuit contains auxiliary power supplies to power the sensing circuitry and the microcontroller. The unpopulated PCB is shown in Figures~\ref{fig:pcb-unpop-top} and~\ref{fig:pcb-unpop-bottom}.
+A printed circuit board (PCB) has been designed and manufactured for the MPPT circuit. The circuit includes the converter, voltage sensors, current sensors, auxiliary power supplies, gate drivers, microcontroller headers, temperature input, and irradiance-sensor interface. The unpopulated PCB is shown in Figures~\ref{fig:pcb-unpop-top} and~\ref{fig:pcb-unpop-bottom}.
 
 \begin{figure}[H]
   \centering
@@ -209,7 +378,7 @@ A printed circuit board (PCB) has been designed and manufactured for the MPPT ci
   \end{minipage}
 \end{figure}
 
-The PCB is pictured with components in Figures~\ref{fig:pcb-top-components} and~\ref{fig:pcb-bottom-components}, with connections indicated.
+The PCB is pictured with components in Figures~\ref{fig:pcb-top-components} and~\ref{fig:pcb-bottom-components}.
 
 \begin{figure}[H]
   \centering
@@ -227,56 +396,150 @@ The PCB is pictured with components in Figures~\ref{fig:pcb-top-components} and~
   \end{minipage}
 \end{figure}
 
-As can be seen in Figure~\ref{fig:pcb-top-components}, the solar panels must be connected to the screw terminal labelled ``Solar panels in'', and the load can be connected to the screw terminal labelled ``Load in''.
+Connect the solar panels to the screw terminal labelled ``Solar panels in''. Connect the controlled output load or battery connection to the output/load terminals according to the practical instructions. Do not rely only on the printed label: always verify polarity with a multimeter before energising the board.
 
-\section{Microcontroller}
+\section{STM32 Interface and CubeMX Configuration}
+\label{sec:stm32-interface}
 
-A STM32 NUCLEO-F303K8 microcontroller will be provided. The microcontroller can be plugged into headers on the PCB. The microcontroller connections are summarised in Table~\ref{tab:microcontroller-pins}.
+The board is designed for an STM32 NUCLEO-F303K8 microcontroller. The NUCLEO board plugs into the PCB headers. Table~\ref{tab:firmware-interface} gives the practical signal map that students need when configuring the firmware. The NUCLEO pin label is the header label on the development board, the STM32 pin/function column is the item to configure in CubeMX or firmware, and the PCB signal label is the schematic or board net name on the MPPT PCB.
+
+\begin{warnbox}{PWM pin verification required}
+The official \href{https://www.st.com/resource/en/user_manual/um1956-stm32-nucleo32-boards-mb1180-stmicroelectronics.pdf}{NUCLEO-F303K8 connector table} maps D1 to PA9 and D3 to PB0. The \href{https://www.st.com/resource/en/datasheet/stm32f303c6.pdf}{STM32F303x6/x8 datasheet} lists PA9 as supporting \code{TIM1\_CH2} and PB0 as supporting \code{TIM1\_CH2N}. Therefore the boost-side D1/D3 channel labels must be checked against the actual PCB routing before energising the converter. Configure and probe the pins on an oscilloscope before connecting the power stage. If the observed high-side and low-side signals are reversed, correct the CubeMX mapping or firmware pin assignment before continuing.
+\end{warnbox}
 
 \begin{table}[H]
   \centering
   \footnotesize
-  \caption{Microcontroller pin connections}
-  \label{tab:microcontroller-pins}
-  \begin{tabularx}{\textwidth}{@{}L{0.11\textwidth} L{0.20\textwidth} L{0.23\textwidth} L{0.34\textwidth}@{}}
-  \toprule
-  \rowcolor{TableHead}\textbf{STM pin label} & \textbf{STM pin function} & \textbf{Connection on board} & \textbf{Description} \\
-  \midrule
-  \code{D1}  & \code{TIM1\_CH2N} & \code{BST\_LOPWM} & Boost side low switch (SW3) PWM \\
-  \code{D0}  & \code{GPIO}       & \code{DQ}         & DS18B20 temperature sensor one-wire connection \\
-  \code{D3}  & \code{TIM1\_CH2}  & \code{BST\_HIPWM} & Boost side high switch (SW4) PWM \\
-  \code{D4}  & \code{UART1\_RX}  & \code{RO}         & ST4E1216IDT receiver data output \\
-  \code{D5}  & \code{UART1\_TX}  & \code{DI}         & ST4E1216IDT transmission data input \\
-  \code{D6}  & \code{GPIO}       & \code{RE}         & ST4E1216IDT receiver enable input, active low \\
-  \code{D7}  & \code{GPIO}       & \code{DE}         & ST4E1216IDT driver enable input, active high \\
-  \code{D8}  & \code{GPIO}       & \code{BST\_DIS}   & Boost side gate driver disable \\
-  \code{D9}  & \code{TIM1\_CH1}  & \code{BCK\_HIPWM} & Buck side high switch (SW1) PWM \\
-  \code{D10} & \code{TIM1\_CH1N} & \code{BCK\_LOPWM} & Buck side low switch (SW2) PWM \\
-  \code{D11} & \code{GPIO}       & \code{BCK\_DIS}   & Buck side gate driver disable \\
-  \code{D12} & \code{GPIO}       & \code{BCK\_STP}   & Buck side shoot-through protection \\
-  \code{D13} & \code{GPIO}       & \code{BST\_STP}   & Boost side shoot-through protection \\
-  \code{A0}  & \code{ADC1\_IN1}  & \code{I\_IN}      & Input current sensor \\
-  \code{A1}  & \code{ADC1\_IN2}  & \code{I\_O}       & Output current sensor \\
-  \code{A3}  & \code{ADC2\_IN1}  & \code{V\_O}       & Output voltage sensor \\
-  \code{A4}  & \code{ADC2\_IN2}  & \code{V\_IN}      & Input voltage sensor \\
-  \bottomrule
+  \caption{STM32 pin and PCB signal map}
+  \label{tab:firmware-interface}
+  \begin{tabularx}{\textwidth}{@{}L{0.12\textwidth} L{0.21\textwidth} L{0.20\textwidth} Y@{}}
+    \toprule
+    \rowcolor{TableHead}\textbf{NUCLEO label} & \textbf{STM32 pin/function} & \textbf{PCB signal label} & \textbf{Purpose} \\
+    \midrule
+    D1  & PA9 / \code{TIM1\_CH2} & \code{BST\_LOPWM} & PWM signal for the boost-side low switch (SW3); verify against D3 before energising. \\
+    D3  & PB0 / \code{TIM1\_CH2N} & \code{BST\_HIPWM} & PWM signal for the boost-side high switch (SW4); verify against D1 before energising. \\
+    D9  & PA8 / \code{TIM1\_CH1} & \code{BCK\_HIPWM} & PWM signal for the buck-side high switch (SW1). \\
+    D10 & PA11 / TIM1 complementary PWM & \code{BCK\_LOPWM} & PWM signal for the buck-side low switch (SW2). \\
+    D8  & PF1 / GPIO output & \code{BST\_DIS} & Active-high disable signal for the boost-side gate driver. \\
+    D11 & PB5 / GPIO output & \code{BCK\_DIS} & Active-high disable signal for the buck-side gate driver. \\
+    D13 & PB3 / GPIO output & \code{BST\_STP} & Shoot-through or dead-time control signal for the boost side. \\
+    D12 & PB4 / GPIO output & \code{BCK\_STP} & Shoot-through or dead-time control signal for the buck side. \\
+    A0  & PA0 / \code{ADC1\_IN1} & \code{I\_IN} & ADC feedback for input/PV current. \\
+    A1  & PA1 / \code{ADC1\_IN2} & \code{I\_O} & ADC feedback for output current. \\
+    A3  & PA4 / \code{ADC2\_IN1} & \code{V\_O} & ADC feedback for output voltage. \\
+    A4  & PA5 / \code{ADC2\_IN2} & \code{V\_IN} & ADC feedback for input/PV voltage. \\
+    D0  & PA10 / GPIO one-wire & \code{DQ} & Bidirectional data line for the DS18B20 temperature sensor. \\
+    D4  & PB7 / UART RX & \code{RO} & Receive data from the ST4E1216IDT RS485 transceiver. \\
+    D5  & PB6 / UART TX & \code{DI} & Transmit data to the ST4E1216IDT RS485 transceiver. \\
+    D6  & PB1 / GPIO output & \code{RE} & Active-low receiver enable for the ST4E1216IDT. \\
+    D7  & PF0 / GPIO output & \code{DE} & Active-high driver enable for the ST4E1216IDT. \\
+    \bottomrule
   \end{tabularx}
 \end{table}
 
-\subsection{Gate Drivers}
+\subsection{CubeMX peripheral checklist}
 
-Two \href{https://www.infineon.com/assets/row/public/documents/24/49/infineon-2edb8259y-datasheet-en.pdf}{2EDB8259Y} half bridge gate drivers are used to drive the buck and boost side of the converter. The buck and boost sides of the converter each have connections for their disable, high-side and low-side PWM, and shoot-through protection pins. When the disable pin is high, switching is disabled. Dead times of $100\,\mathrm{ns}$ are recommended.
+Configure the peripherals in a way that makes safe startup the default:
+\begin{itemize}
+  \item \textbf{Clock}: set a stable system clock and confirm timer clock frequency before calculating PWM period.
+  \item \textbf{TIM1}: use PWM generation with complementary outputs for the buck pair and the verified boost pair; enable preload; configure dead time; do not start outputs until all safe-state GPIOs have been set.
+  \item \textbf{ADC1 and ADC2}: configure the four analog channels; use sufficient sample time for stable sensor readings; use DMA if continuous sampling is required.
+  \item \textbf{GPIO}: set disable pins high before enabling PWM; configure shoot-through protection pins to the approved hardware state; configure RS485 DE low and RE low for receive mode by default.
+  \item \textbf{USART}: configure the irradiance UART for the sensor's Modbus-RTU settings; start with the default baud rate unless instructed otherwise.
+  \item \textbf{Debug}: keep SWD enabled so the firmware can be stopped and inspected during bring-up.
+\end{itemize}
+
+\section{Gate Drivers and PWM Control}
+
+Two \href{https://www.infineon.com/part/2EDB8259Y}{Infineon 2EDB8259Y} isolated half-bridge gate drivers drive the buck and boost half bridges. Each side receives a high-side PWM, a low-side PWM, a disable signal, and a shoot-through/dead-time control signal. When the disable pin is high, the driver outputs are disabled.
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.76\textwidth]{gate_driver_schematic.png}
-  \caption*{2EDB8259Y half bridge gate driver schematic}
+  \caption{2EDB8259Y half-bridge gate-driver schematic}
   \label{fig:gate-driver-schematic}
 \end{figure}
 
-\subsection{Voltage Sensors}
+\subsection{Dead time}
 
-Two \href{https://www.ti.com/product/AMC0311S}{AMC0311S} isolated amplifiers are used for sensing the input and output voltages. The circuit schematic can be seen in Figure~\ref{fig:voltage-sensor}.
+Dead time is the intentional delay between one MOSFET turning off and the complementary MOSFET turning on. It is required because real MOSFETs and gate drivers have finite propagation, rise, and fall times. A recommended starting dead time is $100\,\mathrm{ns}$.
+
+If TIM1 runs from a $72\,\mathrm{MHz}$ timer clock, one timer tick is approximately
+\begin{equation}
+  T_{\mathrm{tick}} = \frac{1}{72\,\mathrm{MHz}} \approx 13.9\,\mathrm{ns}.
+\end{equation}
+A $100\,\mathrm{ns}$ dead time therefore corresponds to roughly seven timer ticks before considering the STM32 advanced-timer dead-time encoding. Configure this using CubeMX and verify the resulting waveform on the oscilloscope.
+
+\subsection{PWM period and compare values}
+
+For a $250\,\mathrm{kHz}$ PWM frequency, the period is $4\,\mu\mathrm{s}$. If the timer counter clock is $f_{\mathrm{TIM}}$, the auto-reload value is approximately
+\begin{equation}
+  ARR = \frac{f_{\mathrm{TIM}}}{f_{\mathrm{PWM}}}-1.
+\end{equation}
+For a $72\,\mathrm{MHz}$ timer clock and edge-aligned PWM, this gives $ARR \approx 287$. If centre-aligned PWM is used, the effective counting path differs and the required value must be adjusted accordingly.
+
+The compare value for a duty cycle $D$ is approximately
+\begin{equation}
+  CCR = D(ARR+1).
+\end{equation}
+Always clamp $D$ before writing the compare register. In early testing use a narrow range such as $0.10\leq D \leq 0.90$, or a tighter range if instructed.
+
+\subsection{Safe PWM update sequence}
+
+Use a sequence similar to the following. The names are illustrative; use the actual names generated by your STM32 project.
+
+\begin{lstlisting}[language=C,caption={Guided PWM startup sequence}]
+set_gate_drivers_disabled();      // BCK_DIS = 1, BST_DIS = 1
+set_rs485_receive_mode();         // DE = 0, RE = 0
+initialise_adc_and_offsets();
+initialise_tim1_pwm_with_deadtime();
+
+write_pwm_duty(BUCK, 0.0f);
+write_pwm_duty(BOOST, 0.0f);
+start_tim1_outputs_only_after_scope_test();
+
+if (measurements_are_valid() && operator_has_enabled_power_test()) {
+    clear_faults();
+    set_initial_safe_duty();
+    set_gate_drivers_enabled();   // BCK_DIS = 0, BST_DIS = 0
+}
+\end{lstlisting}
+
+\subsection{Oscilloscope checks before power-stage testing}
+
+Before connecting PV, battery, or load power, probe the logic-level driver inputs:
+\begin{itemize}
+  \item each complementary pair must have the same PWM frequency;
+  \item high-side and low-side signals in the same half bridge must not overlap;
+  \item the measured dead time must be present at both switching transitions;
+  \item changing the duty command must change the intended PWM channel;
+  \item asserting \code{BCK\_DIS} or \code{BST\_DIS} must disable the corresponding driver outputs;
+  \item D1/D3 boost-side high/low assignment must be confirmed on the real board.
+\end{itemize}
+
+\section{Voltage and Current Sensing}
+\label{sec:sensing}
+
+The STM32 does not measure panel voltage or current directly. It measures sensor output voltages between approximately $0$ and $3.3\,\mathrm{V}$. Firmware must convert ADC counts into engineering units before using them in MPPT or fault checks.
+
+\subsection{ADC conversion}
+
+For a 12-bit ADC with a reference voltage $\Vref$, the measured ADC input voltage is
+\begin{equation}
+  \Vadc = \frac{N}{4095}\Vref,
+  \label{eq:adc-voltage}
+\end{equation}
+where $N$ is the raw ADC count. If the STM32 analog reference is $3.3\,\mathrm{V}$, then one count is approximately $0.806\,\mathrm{mV}$ at the ADC input.
+
+Use averaged or filtered ADC values in the MPPT algorithm. Individual switching-period samples can contain ripple and noise. A simple first-order digital filter is
+\begin{equation}
+  x_f[k] = \alpha x_f[k-1] + (1-\alpha)x[k],
+\end{equation}
+where $\alpha$ close to 1 gives more smoothing and slower response.
+
+\subsection{Voltage sensors}
+
+Two \href{https://www.ti.com/product/AMC0311S}{TI AMC0311S} isolated amplifiers sense input and output voltages. The voltage divider feeds the isolated amplifier input, and the amplifier output is measured by the STM32 ADC. The circuit schematic is shown in Figure~\ref{fig:voltage-sensor}.
 
 \begin{figure}[H]
   \centering
@@ -285,7 +548,7 @@ Two \href{https://www.ti.com/product/AMC0311S}{AMC0311S} isolated amplifiers are
   \label{fig:voltage-sensor}
 \end{figure}
 
-The output, $V_{\mathrm{out}}$, is connected to \code{ADC2\_IN2} and \code{ADC2\_IN1} for the input and output voltages respectively.
+The input voltage sensor is connected to \code{ADC2\_IN2} on A4, and the output voltage sensor is connected to \code{ADC2\_IN1} on A3.
 
 \begin{table}[H]
   \centering
@@ -301,9 +564,22 @@ The output, $V_{\mathrm{out}}$, is connected to \code{ADC2\_IN2} and \code{ADC2\
   \end{tabularx}
 \end{table}
 
-\subsection{Current Sensors}
+Assuming unity gain from the AMC0311S signal path and the divider shown in Figure~\ref{fig:voltage-sensor}, the voltage before the divider is estimated from
+\begin{equation}
+  V_{\mathrm{meas}} = \Vadc \left(\frac{R_1+R_{\mathrm{sns}}}{R_{\mathrm{sns}}}\right).
+  \label{eq:voltage-sensor}
+\end{equation}
 
-Two Allegro MicroSystems \href{https://www.allegromicro.com/-/media/files/datasheets/ct416-datasheet.pdf}{CT416} magnetoresistive current sensors are used for input and output current sensing. A CT416-HSN820DR unidirectional $20\,\mathrm{A}$ current sensor is used to measure the input current, and a CT416-HSN830MR bidirectional $30\,\mathrm{A}$ current sensor is used to measure the output current. The outputs are connected to \code{ADC1\_IN1} and \code{ADC1\_IN2} for the input and output current sensors respectively.
+Using the resistor values in Table~\ref{tab:voltage-sensor-values}, the approximate scale factors are:
+\begin{align}
+  V_{\mathrm{in}}  &\approx \Vadc(46.45),\\
+  V_{\mathrm{o}}   &\approx \Vadc(28.78).
+\end{align}
+These factors must be calibrated against a multimeter because resistor tolerance, amplifier offset, ADC reference accuracy, and layout effects introduce error.
+
+\subsection{Current sensors}
+
+Two \href{https://www.allegromicro.com/~/media/files/datasheets/CT416-datasheet.pdf}{Allegro CT416} magnetoresistive current sensors measure current. A CT416-HSN820DR unidirectional $20\,\mathrm{A}$ sensor is used for the input current, and a CT416-HSN830MR bidirectional $\pm30\,\mathrm{A}$ sensor is used for the output current. The input current sensor output is connected to \code{ADC1\_IN1} on A0. The output current sensor output is connected to \code{ADC1\_IN2} on A1.
 
 \begin{figure}[H]
   \centering
@@ -312,10 +588,305 @@ Two Allegro MicroSystems \href{https://www.allegromicro.com/-/media/files/datash
   \label{fig:current-sensor}
 \end{figure}
 
-\subsection{Temperature Sensors}
+The latest Allegro datasheet marks CT416 as not recommended for new designs. It is still documented here because it is fitted on the practical PCB. Do not replace it with another sensor unless the range, offset, supply voltage, isolation rating, bandwidth, and transfer function have been checked.
 
-\subsection{Irradiance Sensor}
+For the CT416-HSN820DR input-current sensor, the nominal sensitivity is $100\,\mathrm{mV/A}$. For a unidirectional sensor, the output is approximately
+\begin{equation}
+  \Iin \approx \frac{\Vadc - V_{\mathrm{offset,in}}}{0.100}.
+\end{equation}
+Measure $V_{\mathrm{offset,in}}$ at zero current before using the reading.
 
-A \href{https://wiki.dfrobot.com/sen0640/}{RS485 Photoelectric Solar Radiation Sensor} will be provided for solar irradiance sensing. This can be plugged into screw terminal \code{J8}, which connects it to a \href{https://www.digikey.co.za/en/products/detail/stmicroelectronics/ST4E1216IDT/22971696}{ST4E1216IDT} for RS485 to UART signal conversion.
+For the CT416-HSN830MR output-current sensor, the nominal sensitivity is $33.3\,\mathrm{mV/A}$ and the zero-current output is near mid-supply. Estimate output current with
+\begin{equation}
+  \Iout \approx \frac{\Vadc - V_{\mathrm{offset,o}}}{0.0333}.
+\end{equation}
+Because this sensor is bidirectional, current direction is represented by whether the measured voltage is above or below the zero-current offset.
+
+\subsection{Calibration procedure}
+
+Use this calibration workflow before running MPPT:
+\begin{enumerate}
+  \item With no power-stage input and no load current, record at least 1000 samples from all ADC channels.
+  \item Store the zero-current offsets for \code{I\_IN} and \code{I\_O}.
+  \item Apply a known low voltage to the input sensing path if the practical setup allows it, and compare the converted value with a multimeter.
+  \item Repeat for the output voltage sensing path.
+  \item Apply a known low current through the current sensor if instructed, and check the calculated current sign and magnitude.
+  \item Save calibration constants in clearly named variables, not as unexplained numbers inside the MPPT loop.
+\end{enumerate}
+
+\subsection{Power calculation}
+
+The MPPT algorithm must use input-side PV power:
+\begin{equation}
+  \Pin = V_{\mathrm{in}} I_{\mathrm{in}}.
+\end{equation}
+Output voltage and output current are still important, but they are mainly used for battery/load monitoring, efficiency estimation, and fault detection. Do not track maximum output power if the practical asks for PV maximum power point tracking.
+
+\section{Temperature Sensing}
+
+The PCB provides a \href{https://www.analog.com/media/en/technical-documentation/data-sheets/ds18b20.pdf}{DS18B20 temperature-sensor} input on \code{DQ}, connected to D0 on the NUCLEO header. The DS18B20 uses a one-wire digital interface. The data line is bidirectional and is normally held high by a pull-up resistor. The microcontroller communicates by pulling the line low for precisely timed reset, write, and read slots.
+
+\subsection{Firmware approach}
+
+Students may use a simple DS18B20 driver or write the timing routines themselves. The important firmware steps are:
+\begin{enumerate}
+  \item configure D0 as open-drain output when the STM32 must pull the line low;
+  \item release the line and configure it as input when the sensor must respond;
+  \item issue a reset pulse and check for the sensor presence pulse;
+  \item send \code{Skip ROM} if only one sensor is connected, followed by \code{Convert T};
+  \item wait for conversion to complete;
+  \item reset again, send \code{Skip ROM}, then \code{Read Scratchpad};
+  \item convert the returned temperature word into degrees Celsius.
+\end{enumerate}
+
+Temperature does not have to run at the PWM rate. A reading every second is usually adequate for thermal monitoring. If no sensor is detected, the firmware should report a warning and either continue with reduced functionality or stop according to the practical requirements.
+
+\section{Irradiance Sensor and RS485 Interface}
+
+A \href{https://wiki.dfrobot.com/sen0640/docs/20430}{DFRobot SEN0640 RS485 photoelectric solar-radiation sensor} is provided for irradiance sensing. It can be plugged into screw terminal \code{J8}. The PCB uses an \href{https://www.st.com/resource/en/datasheet/st4e1216.pdf}{ST4E1216IDT RS485 transceiver} to convert between the differential RS485 bus and the STM32 UART pins.
+
+The SEN0640 measures solar radiation over a 400--1100 nm wavelength range and reports values over Modbus-RTU. The default Modbus address is \code{0x01}. The default UART settings are 4800 bit/s, 8 data bits, no parity, and 1 stop bit.
+
+If you have not used Modbus before, first work through the \href{https://www.csimn.com/CSI_pages/Modbus101.html}{Control Solutions Modbus protocol tutorial}. Pay particular attention to RTU framing, function codes, register addresses, and the low-byte-first CRC order. Then use the SEN0640 reference for the sensor-specific register and example request bytes used below.
+
+\subsection{RS485 direction control}
+
+RS485 on this board is half-duplex. The STM32 must explicitly control whether the transceiver is listening or transmitting:
+\begin{itemize}
+  \item \code{DE}=0 disables the RS485 driver so the board is not driving the bus.
+  \item \code{DE}=1 enables transmission from the STM32 through \code{DI}.
+  \item \code{RE}=0 enables the receiver so the STM32 can read \code{RO}.
+  \item \code{RE}=1 disables the receiver.
+\end{itemize}
+
+For normal receive mode, use \code{DE}=0 and \code{RE}=0. To transmit a Modbus request, set \code{DE}=1, transmit the bytes, wait until the UART has fully completed transmission, then return to receive mode with \code{DE}=0 and \code{RE}=0.
+
+\subsection{Modbus-RTU read}
+
+To read the current solar radiation value, send a Modbus function \code{0x03} request for register \code{0x0000} with length \code{0x0001}. For the default address, the request frame is:
+
+\begin{lstlisting}[caption={SEN0640 read-irradiance request bytes}]
+01 03 00 00 00 01 84 0A
+\end{lstlisting}
+
+A response carrying $100\,\mathrm{W/m^2}$ is:
+
+\begin{lstlisting}[caption={Example SEN0640 response bytes}]
+01 03 02 00 64 9B AF
+\end{lstlisting}
+
+The two data bytes are big-endian. In the example, \code{0x0064} equals 100, so the irradiance is $100\,\mathrm{W/m^2}$. The final two bytes are the Modbus CRC, transmitted low byte first.
+
+\subsection{Common RS485 faults}
+
+If the irradiance reading fails:
+\begin{itemize}
+  \item check that the sensor is powered from the required supply voltage;
+  \item swap A/B only after confirming the connector labelling and wiring;
+  \item confirm the UART baud rate and frame format;
+  \item confirm \code{DE} returns low after transmission;
+  \item confirm \code{RE} is low during receive;
+  \item check the Modbus address and CRC;
+  \item remember that the sensor response time can be several seconds, so do not assume the value changes instantly.
+\end{itemize}
+
+\section{Firmware Architecture}
+
+The firmware should be structured so that unsafe behaviour is difficult to trigger accidentally. Separate hardware drivers, measurement conversion, fault checks, and MPPT logic. Do not place all behaviour inside one large while-loop with hard-coded pin operations.
+
+\subsection{Recommended initialisation order}
+
+\begin{enumerate}
+  \item Start in a safe GPIO state: gate-driver disable pins high, RS485 driver disabled, PWM outputs stopped.
+  \item Initialise the HAL, clock tree, GPIO, ADC, DMA, UART, timers, and debug interface.
+  \item Read ADC offsets while the power stage is not switching.
+  \item Check that voltage and current readings are plausible.
+  \item Configure TIM1 PWM compare values to a safe starting value, but keep gate drivers disabled.
+  \item Wait for a user command, practical-state flag, or explicit firmware condition before enabling switching.
+  \item Enable the gate drivers and ramp duty cycle slowly.
+  \item Enter the main measurement, fault-check, and MPPT loop.
+\end{enumerate}
+
+\subsection{Main control-loop timing}
+
+Use different rates for different tasks:
+\begin{itemize}
+  \item \textbf{PWM}: hardware timer at $250\,\mathrm{kHz}$.
+  \item \textbf{ADC acquisition}: fast enough to observe converter behaviour, commonly using DMA and filtering.
+  \item \textbf{Fault checks}: frequent, for example every control-loop cycle.
+  \item \textbf{MPPT update}: slower than the PWM rate; allow the converter and measurements to settle after changing duty cycle.
+  \item \textbf{Temperature and irradiance}: slow environmental variables; update at about 1 Hz or as required.
+  \item \textbf{Logging}: slow enough that UART printing does not disturb control timing.
+\end{itemize}
+
+\subsection{State machine}
+
+Implement the firmware as a state machine. A suggested structure is shown in Table~\ref{tab:firmware-states}.
+
+\begin{table}[H]
+  \centering
+  \caption{Suggested firmware states}
+  \label{tab:firmware-states}
+  \begin{tabularx}{\textwidth}{@{}L{0.18\textwidth} Y Y@{}}
+    \toprule
+    \rowcolor{TableHead}\textbf{State} & \textbf{Purpose} & \textbf{Exit condition} \\
+    \midrule
+    \code{INIT} & Configure peripherals and force safe outputs. & Initialisation complete. \\
+    \code{IDLE} & PWM stopped, gate drivers disabled, measurements active. & User/test command and valid measurements. \\
+    \code{STARTUP} & Apply approved precharge/startup sequence and small duty command. & Voltages/currents plausible and stable. \\
+    \code{RUN} & Execute MPPT, update duty cycles, log data. & Fault, stop command, or test complete. \\
+    \code{FAULT} & Disable switching and record cause. & Manual reset or approved recovery condition. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Guided MPPT and PSO pseudocode}
+
+Particle swarm optimisation (PSO) can be used by treating each particle as a candidate converter command. The candidate may be a buck duty cycle, a boost duty cycle, or a mapped operating variable depending on the practical specification. Each particle stores its current position, velocity, personal best position, and personal best measured power.
+
+\begin{lstlisting}[caption={Guided PSO-style MPPT structure}]
+initialise_particles_with_safe_duty_values();
+global_best = first_valid_particle();
+
+while (state == RUN) {
+    read_and_filter_measurements();
+    check_fault_limits();
+    if (fault_active) {
+        disable_pwm_and_enter_fault();
+        break;
+    }
+
+    particle = select_next_particle();
+    duty = clamp(particle.position, DUTY_MIN, DUTY_MAX);
+    ramp_pwm_to(duty);
+    wait_for_converter_to_settle();
+
+    read_and_filter_measurements();
+    p_pv = v_in * i_in;
+
+    if (p_pv > particle.best_power) {
+        particle.best_power = p_pv;
+        particle.best_position = particle.position;
+    }
+
+    if (p_pv > global_best.power) {
+        global_best.power = p_pv;
+        global_best.position = particle.position;
+    }
+
+    update_particle_velocity_and_position(
+        particle,
+        particle.best_position,
+        global_best.position);
+}
+\end{lstlisting}
+
+This pseudocode omits the exact PSO coefficients intentionally. Students must select and justify coefficients according to the practical instructions. The firmware must still clamp all candidate duty values and must never allow the optimiser to bypass fault checks.
+
+\subsection{Fault handling}
+
+When a fault occurs:
+\begin{enumerate}
+  \item immediately command zero or safe PWM compare values;
+  \item assert \code{BCK\_DIS} and \code{BST\_DIS};
+  \item stop MPPT updates;
+  \item record the fault source, latest measurements, and duty command;
+  \item require a deliberate reset or approved recovery action before re-enabling switching.
+\end{enumerate}
+
+\section{Laboratory Bring-up Procedure}
+
+The bring-up procedure should be followed in stages. Do not skip ahead because a later stage assumes that the previous stage has been verified.
+
+\subsection{Stage 1: static checks}
+
+\begin{itemize}
+  \item Inspect the board for visible damage, incorrect connections, or loose wires.
+  \item Check continuity and polarity of the input and output terminals.
+  \item Confirm that the NUCLEO board is seated correctly in the headers.
+  \item Power only the logic supply and check that the STM32 can be programmed.
+\end{itemize}
+
+\subsection{Stage 2: MCU-only firmware checks}
+
+\begin{itemize}
+  \item Confirm \code{BCK\_DIS} and \code{BST\_DIS} are high immediately after reset.
+  \item Toggle each GPIO signal one at a time and measure it at the accessible point.
+  \item Read all ADC channels and confirm zero-current offsets are plausible.
+  \item Confirm the DS18B20 presence pulse or report a clear sensor-not-found warning.
+  \item Send the SEN0640 Modbus request and confirm a valid response or a useful timeout message.
+\end{itemize}
+
+\subsection{Stage 3: PWM-on-scope checks}
+
+\begin{itemize}
+  \item Start TIM1 while the gate drivers remain disabled.
+  \item Measure each PWM signal at the driver input.
+  \item Confirm frequency, duty-cycle response, complementary pairing, and dead time.
+  \item Verify D1/D3 boost-side assignment against the real board.
+  \item Confirm that disabling a gate driver removes the expected switching command.
+\end{itemize}
+
+\subsection{Stage 4: low-voltage current-limited converter test}
+
+\begin{itemize}
+  \item Use a current-limited bench supply, not the PV panels.
+  \item Use a conservative load and low duty command.
+  \item Monitor input voltage, input current, output voltage, output current, and MOSFET temperature.
+  \item Increase duty only after the measured response agrees with converter theory.
+  \item Stop immediately if current rises unexpectedly or measurements disagree with the multimeter.
+\end{itemize}
+
+\subsection{Stage 5: PV, battery, and MPPT testing}
+
+\begin{itemize}
+  \item Confirm the approved PV and battery/load setup with the demonstrator.
+  \item Start from \code{IDLE}; log the open-circuit PV voltage.
+  \item Enable switching with conservative duty limits.
+  \item Run MPPT slowly at first and log $\Vpv$, $\Iin$, $\Pin$, $\Vout$, $\Iout$, duty cycle, temperature, and irradiance.
+  \item Compare the tracked operating point with expected PV behaviour.
+\end{itemize}
+
+\section{Troubleshooting}
+
+\begin{table}[H]
+  \centering
+  \caption{Common faults and first checks}
+  \label{tab:troubleshooting}
+  \begin{tabularx}{\textwidth}{@{}L{0.24\textwidth} Y Y@{}}
+    \toprule
+    \rowcolor{TableHead}\textbf{Symptom} & \textbf{Likely causes} & \textbf{First checks} \\
+    \midrule
+    No PWM on a pin & Timer not started, wrong alternate function, GPIO still configured as output/input & Check CubeMX pin mode, start calls, and oscilloscope ground. \\
+    Complementary pair overlaps & Dead time missing or wrong channel pairing & Recheck TIM1 complementary-output settings and D1/D3 mapping. \\
+    Gate driver does not switch & Disable pin high, supply missing, wrong PWM input & Measure \code{DIS}, driver supply, and input pin waveform. \\
+    ADC value stuck & Wrong ADC channel, pin not analog, DMA not started & Check CubeMX ADC rank/channel and raw counts. \\
+    Current nonzero at no load & Sensor offset not calibrated, noise, wrong sign convention & Record zero-current offset and apply filtering. \\
+    Irradiance timeout & RS485 direction wrong, A/B reversed, baud mismatch, wrong CRC & Check \code{DE}/\code{RE}, UART settings, and request bytes. \\
+    MPPT unstable & Update too fast, duty step too large, insufficient filtering, weak fault limits & Slow the MPPT loop, ramp duty, and log each candidate. \\
+    Output voltage rises too high & Load disconnected, duty too high, wrong mode transition & Disable PWM and inspect load, limits, and duty clamp. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{Reference Resources}
+\label{sec:resources}
+
+Use the following references when configuring firmware or checking component behaviour:
+\begin{itemize}
+  \item \href{https://www.st.com/en/development-tools/stm32cubeide}{STM32CubeIDE download page}.
+  \item \href{https://www.st.com/en/evaluation-tools/nucleo-f303k8.html}{NUCLEO-F303K8 product page}.
+  \item \href{https://www.st.com/resource/en/user_manual/um1956-stm32-nucleo32-boards-mb1180-stmicroelectronics.pdf}{UM1956 STM32 Nucleo-32 boards user manual}.
+  \item \href{https://www.st.com/en/microcontrollers-microprocessors/stm32f303/documentation.html}{STM32F303 documentation page}.
+  \item \href{https://www.st.com/resource/en/datasheet/stm32f303c6.pdf}{STM32F303x6/x8 datasheet}.
+  \item \href{https://www.infineon.com/part/2EDB8259Y}{Infineon 2EDB8259Y gate-driver page}.
+  \item \href{https://www.ti.com/product/AMC0311S}{TI AMC0311S isolated-amplifier page}.
+  \item \href{https://www.allegromicro.com/~/media/files/datasheets/CT416-datasheet.pdf}{Allegro CT416 current-sensor datasheet}.
+  \item \href{https://www.analog.com/media/en/technical-documentation/data-sheets/ds18b20.pdf}{Analog Devices DS18B20 temperature-sensor datasheet}.
+  \item \href{https://www.st.com/resource/en/datasheet/st4e1216.pdf}{ST4E1216 RS485 transceiver datasheet}.
+  \item \href{https://www.csimn.com/CSI_pages/Modbus101.html}{Control Solutions Modbus protocol tutorial}.
+  \item \href{https://wiki.dfrobot.com/sen0640/docs/20430}{DFRobot SEN0640 Modbus-RTU reference}.
+  \item \href{https://www.offgridtec.com/media/product_attachements/YingliSolar_410W\%20YLM-J\%203.0\%20PRO_Datasheet.pdf}{Yingli YLM-J 3.0 PRO panel datasheet}.
+\end{itemize}
 
 \end{document}
