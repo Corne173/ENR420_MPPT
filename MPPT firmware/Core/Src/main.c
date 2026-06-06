@@ -135,6 +135,54 @@ typedef struct
 #define LD3_RUN_ON_TIME_MS         (100U)
 
 /*
+ * Irradiance sensor Modbus transaction configuration.
+ *
+ * IrradianceSensor_Task() already performs the USART1/RS485 polling transaction;
+ * students should not add another UART loop in main(). Their main task is to
+ * confirm the constants below from the implementation guide and the sensor's
+ * Modbus register table.
+ *
+ * One Modbus RTU poll works as follows:
+ *   1. The task waits for IRRADIANCE_TASK_PERIOD_MS so the sensor is not queried
+ *      on every pass through the main loop.
+ *   2. IrradianceSensor_BuildReadRequest() creates this request frame:
+ *        [slave ID][function][start register][register count][CRC low][CRC high]
+ *      The start register and register count are sent most-significant byte
+ *      first. The CRC is calculated by the firmware and appended automatically.
+ *   3. The RS485 transceiver is placed in transmit mode and HAL_UART_Transmit()
+ *      sends the request on USART1.
+ *   4. The transceiver is returned to receive mode and HAL_UART_Receive() waits
+ *      for the sensor response:
+ *        [slave ID][function][byte count][data bytes][CRC low][CRC high]
+ *   5. IrradianceSensor_ParseReadResponse() checks the echoed slave ID and
+ *      function code, confirms the byte count and CRC, then converts the returned
+ *      register data to W/m^2.
+ *
+ * Values students must confirm before enabling the task:
+ *   - slave ID / device address on the shared RS485 bus;
+ *   - Modbus read function code for the irradiance register;
+ *   - first irradiance register address;
+ *   - number of 16-bit registers returned;
+ *   - returned data format, units, and raw-to-W/m^2 scale factor;
+ *   - USART1 baud rate, parity, stop bits, and RS485 A/B wiring.
+ *
+ * In most cases, update these #define values rather than editing the
+ * HAL_UART_Transmit() and HAL_UART_Receive() calls inside IrradianceSensor_Task().
+ * Treat the numeric values below as scaffold values until they have been checked
+ * against the guide and the specific sensor's Modbus table.
+ */
+#define IRRADIANCE_SENSOR_ENABLE                    (0U)
+#define IRRADIANCE_TASK_PERIOD_MS                   (1000U)
+#define IRRADIANCE_MODBUS_SLAVE_ID                  (1U)       /* Check: sensor Modbus address / slave ID. */
+#define IRRADIANCE_MODBUS_FUNCTION_CODE             (0x04U)    /* Check: read function code for this register type. */
+#define IRRADIANCE_MODBUS_START_REGISTER            (0x0000U)  /* Check: first irradiance register address. */
+#define IRRADIANCE_MODBUS_REGISTER_COUNT            (1U)       /* Check: number of 16-bit registers returned. */
+#define IRRADIANCE_MODBUS_REQUEST_LENGTH            (8U)
+#define IRRADIANCE_MODBUS_RESPONSE_MAX_LENGTH       (32U)
+#define IRRADIANCE_MODBUS_TIMEOUT_MS                (100U)     /* Check/test: maximum wait for one reply. */
+#define IRRADIANCE_RAW_TO_W_PER_M2_SCALE            (1.0f)     /* Check: raw register to W/m^2 scale factor. */
+
+/*
  * High-level command and status variables.
  *
  * The serial console sets request flags such as "start" and "stop". The state
@@ -163,6 +211,9 @@ static uint32_t ld3_status_pattern_started_ms = 0U;
 static uint8_t serial_console_rx_byte = 0U;
 static volatile uint8_t serial_console_pending_command = 0U;
 static volatile bool serial_console_command_pending = false;
+static uint32_t irradiance_task_last_ms = 0U;
+static float irradiance_w_m2 = 0.0f;
+static bool irradiance_valid = false;
 
 /* Forward declarations keep main() near the top while functions remain grouped by purpose below. */
 void SystemClock_Config(void);
@@ -199,6 +250,17 @@ static void SerialConsole_PrintHelp(void);
 static void SerialConsole_PrintStatus(void);
 static void SerialConsole_Send(const char *text);
 static void SerialConsole_SendLine(const char *text);
+static void IrradianceSensor_Init(void);
+static void IrradianceSensor_Task(void);
+static size_t IrradianceSensor_BuildReadRequest(uint8_t *request, size_t request_size);
+static bool IrradianceSensor_ParseReadResponse(const uint8_t *response,
+                                               size_t response_length,
+                                               float *irradiance_out_w_m2);
+static void Rs485_SetTransmitMode(void);
+static void Rs485_SetReceiveMode(void);
+static uint16_t Modbus_Crc16(const uint8_t *data, size_t length);
+static void StoreU16BigEndian(uint8_t *destination, uint16_t value);
+static uint16_t ReadU16BigEndian(const uint8_t *source);
 static void Ld3Status_TestTask(MpptState_t state);
 static void Ld3Status_ApplyPattern(uint32_t period_ms, uint32_t on_time_ms);
 static void Ld3Status_Set(bool led_on);
@@ -224,6 +286,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM3_Init();
   MX_USART2_UART_Init();
+  IrradianceSensor_Init();
 
   /* Start the PC console first so boot messages and fault states are visible. */
   SerialConsole_Init();
@@ -244,6 +307,9 @@ int main(void)
   {
     /* Handles one-byte user commands received over USART2. */
     SerialConsole_Task();
+
+    /* Student hook for irradiance-sensor polling over USART1/RS485 Modbus. */
+    IrradianceSensor_Task();
 
     /* Runs measurement, protection, state transitions, and MPPT updates. */
     Mppt_StateMachineTask();
@@ -1072,6 +1138,291 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
      * console can recover without resetting the MCU. */
     SerialConsole_StartReceive();
   }
+}
+
+/**
+  * @brief  Places the RS485 transceiver in receive mode and clears the local
+  *         irradiance measurement status.
+  */
+static void IrradianceSensor_Init(void)
+{
+  Rs485_SetReceiveMode();
+  irradiance_task_last_ms = HAL_GetTick();
+  irradiance_w_m2 = 0.0f;
+  irradiance_valid = false;
+}
+
+/**
+  * @brief  Student scaffold for polling an irradiance sensor over USART1/RS485
+  *         using Modbus RTU.
+  *
+  * This task is called from the main loop. It is disabled by default; enable it
+  * only after confirming the constants and USART1/RS485 settings documented in
+  * the irradiance configuration block near the top of this file.
+  *
+  * When enabling it, keep the blocking UART calls short. A production controller
+  * should normally move Modbus receive handling to interrupts, DMA, or a small
+  * non-blocking state machine so that MPPT timing is not disturbed.
+  */
+static void IrradianceSensor_Task(void)
+{
+  const uint32_t now_ms = HAL_GetTick();
+  uint8_t request[IRRADIANCE_MODBUS_REQUEST_LENGTH] = {0};
+  uint8_t response[IRRADIANCE_MODBUS_RESPONSE_MAX_LENGTH] = {0};
+  size_t request_length;
+  size_t expected_response_length;
+
+  /* Keep the scaffold compiled but inactive until the sensor constants and UART
+   * settings have been checked. Set IRRADIANCE_SENSOR_ENABLE to 1 only after that. */
+  if (IRRADIANCE_SENSOR_ENABLE == 0U)
+  {
+    return;
+  }
+
+  /* The main loop runs continuously. This guard makes the irradiance poll run
+   * only once per IRRADIANCE_TASK_PERIOD_MS instead of on every loop iteration. */
+  if (!TimeElapsed(now_ms, irradiance_task_last_ms, IRRADIANCE_TASK_PERIOD_MS))
+  {
+    return;
+  }
+
+  /* From here onward, this function is performing one complete sensor poll. */
+  irradiance_task_last_ms = now_ms;
+
+  /* A normal Modbus read response contains:
+   *   slave ID, function code, byte count, data bytes, CRC low, CRC high.
+   * Each requested register contributes two data bytes. For example, reading one
+   * 16-bit register gives 5 + 2*1 = 7 response bytes. */
+  expected_response_length =
+      5U + ((size_t)IRRADIANCE_MODBUS_REGISTER_COUNT * 2U);
+
+  if (expected_response_length > sizeof(response))
+  {
+    irradiance_valid = false;
+    return;
+  }
+
+  /* Build request[] from the constants near the top of this file. This helper
+   * also inserts the correct Modbus byte order and appends the CRC. */
+  request_length = IrradianceSensor_BuildReadRequest(request, sizeof(request));
+  if (request_length == 0U)
+  {
+    irradiance_valid = false;
+    return;
+  }
+
+  /* RS485 is half-duplex on this board. Enable transmit mode before driving the bus. */
+  Rs485_SetTransmitMode();
+
+  /* Send the complete Modbus request frame on USART1. request_length is normally
+   * 8 bytes for a standard single-register read request. */
+  if (HAL_UART_Transmit(&huart1,
+                        request,
+                        (uint16_t)request_length,
+                        IRRADIANCE_MODBUS_TIMEOUT_MS) != HAL_OK)
+  {
+    Rs485_SetReceiveMode();
+    irradiance_valid = false;
+    return;
+  }
+
+  /* After the request has been sent, release the bus driver and enable receiving
+   * so the sensor can reply on the same RS485 pair. */
+  Rs485_SetReceiveMode();
+
+  /* Read the expected number of response bytes into response[]. For a one-register
+   * read this is usually 7 bytes: address, function, byte count, 2 data bytes, CRC. */
+  if (HAL_UART_Receive(&huart1,
+                       response,
+                       (uint16_t)expected_response_length,
+                       IRRADIANCE_MODBUS_TIMEOUT_MS) != HAL_OK)
+  {
+    irradiance_valid = false;
+    return;
+  }
+
+  /* Validate the reply, check its CRC, and convert the returned data register to
+   * the engineering value irradiance_w_m2. */
+  if (!IrradianceSensor_ParseReadResponse(response,
+                                          expected_response_length,
+                                          &irradiance_w_m2))
+  {
+    irradiance_valid = false;
+    return;
+  }
+
+  /* Reaching this point means the complete request/response transaction succeeded. */
+  irradiance_valid = true;
+}
+
+/**
+  * @brief  Builds a Modbus RTU read-register request frame.
+  *
+  * Students normally do not need to type raw Modbus request bytes by hand. This
+  * helper constructs the request from the constants at the top of the file and
+  * appends the CRC automatically.
+  *
+  * @param  request Destination buffer.
+  * @param  request_size Size of destination buffer in bytes.
+  * @retval Number of bytes written, or 0 if the buffer is too small.
+  */
+static size_t IrradianceSensor_BuildReadRequest(uint8_t *request, size_t request_size)
+{
+  uint16_t crc;
+
+  if (request_size < IRRADIANCE_MODBUS_REQUEST_LENGTH)
+  {
+    return 0U;
+  }
+
+  /* Modbus RTU request byte layout for a register read:
+   *   request[0]    = sensor slave address;
+   *   request[1]    = Modbus function code from the sensor documentation;
+   *   request[2..3] = first register address, most-significant byte first;
+   *   request[4..5] = number of 16-bit registers to read;
+   *   request[6..7] = CRC-16, transmitted low byte first in Modbus RTU.
+   */
+  request[0] = IRRADIANCE_MODBUS_SLAVE_ID;
+  request[1] = IRRADIANCE_MODBUS_FUNCTION_CODE;
+  StoreU16BigEndian(&request[2], IRRADIANCE_MODBUS_START_REGISTER);
+  StoreU16BigEndian(&request[4], IRRADIANCE_MODBUS_REGISTER_COUNT);
+
+  crc = Modbus_Crc16(request, 6U);
+  request[6] = (uint8_t)(crc & 0x00FFU);
+  request[7] = (uint8_t)((crc >> 8) & 0x00FFU);
+
+  return IRRADIANCE_MODBUS_REQUEST_LENGTH;
+}
+
+/**
+  * @brief  Parses a Modbus RTU response from the irradiance sensor.
+  * @param  response Received response frame.
+  * @param  response_length Number of received bytes.
+  * @param  irradiance_out_w_m2 Destination for converted irradiance.
+  * @retval true when the response is structurally valid and converted.
+  */
+static bool IrradianceSensor_ParseReadResponse(const uint8_t *response,
+                                               size_t response_length,
+                                               float *irradiance_out_w_m2)
+{
+  const size_t minimum_response_length = 7U;
+  uint16_t received_crc;
+  uint16_t calculated_crc;
+  uint16_t raw_irradiance;
+
+  if ((response_length < minimum_response_length) || (irradiance_out_w_m2 == NULL))
+  {
+    return false;
+  }
+
+  /* The first two reply bytes must echo the addressed sensor and function code.
+   * If this check fails, confirm the sensor address and read function in the
+   * datasheet, then confirm that the STM32 is receiving the correct RS485 bus. */
+  if ((response[0] != IRRADIANCE_MODBUS_SLAVE_ID) ||
+      (response[1] != IRRADIANCE_MODBUS_FUNCTION_CODE))
+  {
+    return false;
+  }
+
+  /* response[2] is the Modbus byte count. A single 16-bit register requires at
+   * least two data bytes at response[3] and response[4]. */
+  if (response[2] < 2U)
+  {
+    return false;
+  }
+
+  received_crc = (uint16_t)response[response_length - 2U] |
+                 ((uint16_t)response[response_length - 1U] << 8);
+  calculated_crc = Modbus_Crc16(response, response_length - 2U);
+  if (received_crc != calculated_crc)
+  {
+    return false;
+  }
+
+  /*
+   * TODO: confirm the sensor data format.
+   *
+   * This scaffold assumes the first returned register is an unsigned 16-bit
+   * irradiance value. If the sensor returns a signed value, 32-bit value, float,
+   * or multiple channels, replace this conversion with the datasheet format.
+   *
+   * response[3] and response[4] are the first two data bytes after the Modbus
+   * byte-count field. ReadU16BigEndian() converts those two Modbus-ordered bytes
+   * into one STM32 uint16_t. The scale factor then converts the raw register value
+   * into W/m^2 according to the datasheet's units/resolution statement.
+   */
+  raw_irradiance = ReadU16BigEndian(&response[3]);
+  *irradiance_out_w_m2 =
+      (float)raw_irradiance * IRRADIANCE_RAW_TO_W_PER_M2_SCALE;
+
+  return true;
+}
+
+/**
+  * @brief  Enables RS485 transmit mode.
+  */
+static void Rs485_SetTransmitMode(void)
+{
+  /* Most RS485 transceivers use DE high to transmit and active-low /RE high to
+   * disable receiving. Confirm the board/transceiver before live testing. */
+  HAL_GPIO_WritePin(DE___RS485_GPIO_Port, DE___RS485_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(RE___RS485_GPIO_Port, RE___RS485_Pin, GPIO_PIN_SET);
+}
+
+/**
+  * @brief  Enables RS485 receive mode.
+  */
+static void Rs485_SetReceiveMode(void)
+{
+  HAL_GPIO_WritePin(DE___RS485_GPIO_Port, DE___RS485_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(RE___RS485_GPIO_Port, RE___RS485_Pin, GPIO_PIN_RESET);
+}
+
+/**
+  * @brief  Calculates the Modbus RTU CRC-16 over a frame.
+  * @param  data Frame bytes excluding the CRC field.
+  * @param  length Number of bytes to process.
+  * @retval Modbus CRC value before low-byte/high-byte frame ordering.
+  */
+static uint16_t Modbus_Crc16(const uint8_t *data, size_t length)
+{
+  uint16_t crc = 0xFFFFU;
+
+  for (size_t byte_index = 0U; byte_index < length; byte_index++)
+  {
+    crc ^= data[byte_index];
+
+    for (uint8_t bit_index = 0U; bit_index < 8U; bit_index++)
+    {
+      if ((crc & 0x0001U) != 0U)
+      {
+        crc = (uint16_t)((crc >> 1) ^ 0xA001U);
+      }
+      else
+      {
+        crc >>= 1;
+      }
+    }
+  }
+
+  return crc;
+}
+
+/**
+  * @brief  Stores a 16-bit value in Modbus big-endian register order.
+  */
+static void StoreU16BigEndian(uint8_t *destination, uint16_t value)
+{
+  destination[0] = (uint8_t)((value >> 8) & 0x00FFU);
+  destination[1] = (uint8_t)(value & 0x00FFU);
+}
+
+/**
+  * @brief  Reads a 16-bit value from Modbus big-endian register order.
+  */
+static uint16_t ReadU16BigEndian(const uint8_t *source)
+{
+  return (uint16_t)(((uint16_t)source[0] << 8) | source[1]);
 }
 
 /**

@@ -66,16 +66,17 @@ In this section, "implemented" means the functionality is present in the current
 | Serial interface | The firmware provides start, stop, fault reset, status, and help commands over the serial console. |
 | Telemetry | Raw ADC telemetry packets are transmitted for debugging measurements and controller state. |
 | PWM and safety scaffold | TIM1 complementary PWM duty commands, gate-driver disable control, duty clamping, startup duty, ADC saturation checking, and latched fault handling are present. |
+| Irradiance sensor scaffold | `IrradianceSensor_Task()` is called from the main loop and contains a disabled RS485/Modbus polling skeleton with request building, CRC checking, RS485 direction control, and response parsing placeholders. |
 
 ### What still needs to be done
 
 | Work item | Where to work |
 | --- | --- |
-| Implement the real MPPT algorithm using PV voltage, PV current, and PV power to update the buck and boost duty commands. | [`Mppt_CalculateDuty()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L522) |
-| Validate ADC channel mapping, sensor scaling factors, current offsets, and calculated engineering units against real measurements. | [`Measurements_Update()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L560) |
-| Verify duty limits, PWM polarity, complementary outputs, gate-driver enable/disable behaviour, and oscilloscope waveforms before energising the converter. | [`PowerStage_SetDuty()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L775) |
-| Add practical operating-limit protection. The present check catches saturated ADC readings only; real over-voltage, over-current, and laboratory safety thresholds still need to be added. | [`Measurements_AreInAdcRange()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L596) |
-| Complete the irradiance sensor / RS485 Modbus request-response logic. USART1 and the RS485 direction-control pins are configured, but protocol-level handling still needs to be implemented and tested. | [`MPPT firmware/Core/Src/`](MPPT%20firmware/Core/Src/) |
+| Implement the real MPPT algorithm using PV voltage, PV current, and PV power to update the buck and boost duty commands. | [`Mppt_CalculateDuty()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L559) |
+| Validate ADC channel mapping, sensor scaling factors, current offsets, and calculated engineering units against real measurements. | [`Measurements_Update()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L597) |
+| Verify duty limits, PWM polarity, complementary outputs, gate-driver enable/disable behaviour, and oscilloscope waveforms before energising the converter. | [`PowerStage_SetDuty()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L812) |
+| Add practical operating-limit protection. The present check catches saturated ADC readings only; real over-voltage, over-current, and laboratory safety thresholds still need to be added. | [`Measurements_AreInAdcRange()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L633) |
+| Complete the irradiance sensor / RS485 Modbus request-response logic. Confirm the sensor slave address, register address, register count, response format, and scaling, then enable and complete the polling scaffold. | [`IrradianceSensor_Task()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L1138) and [`IrradianceSensor_ParseReadResponse()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L1246) |
 
 ## Optional Serial GUI
 
@@ -95,26 +96,21 @@ python mppt_serial_gui.py
 
 ## Getting Help
 
-Please use the GitHub **Issues** feature for project problems, bugs, unclear instructions, firmware questions, or documentation gaps.
+Please use the GitHub **Issues** feature for project problems, bugs, unclear instructions, firmware questions, or documentation gaps. Issues keep questions and solutions visible, so one student's problem can help the next group too.
 
-Before opening a new issue:
+To create an issue:
 
-1. Check the troubleshooting section in the guide.
-2. Search existing issues to see whether someone has already reported the same problem.
-3. Include enough detail for someone else to reproduce or understand the problem.
+1. Open this repository on GitHub.
+2. Select the **Issues** tab near the top of the repository page.
+3. Search existing issues first to see whether the same problem has already been reported.
+4. Select **New issue** and write a clear title and description.
+5. Submit the issue and watch the thread for replies or follow-up questions.
 
-A useful issue should include:
+GitHub's own guide is here: [Creating an issue](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-an-issue).
 
-| Include | Example |
-| --- | --- |
-| What you were trying to do | "I was flashing the firmware from STM32CubeIDE." |
-| What happened | "The build succeeds, but the board does not transmit serial data." |
-| What you expected | "I expected voltage and current readings to appear in the serial monitor." |
-| Relevant files or settings | CubeMX settings, modified code section, COM port, baud rate, or terminal output. |
-| Firmware status | Current state, fault code, serial command used, and any `ADC,...` telemetry line. |
-| Hardware context | Board version, wiring, supply voltage, panel/load setup, and any measurements already taken. |
+When creating the issue, include what you were trying to do, what happened, what you expected, and enough detail for someone else to reproduce the problem. For firmware issues, include the current state, fault code, serial command used, any `ADC,...` telemetry line, relevant code changes, and the hardware setup.
 
-Posting issues publicly helps the current teaching team assist you, and it also builds a searchable record for students who run into the same problem in future years.
+Do not post private information, student numbers, passwords, or anything unrelated to the project.
 
 ## Notes for Contributors
 
