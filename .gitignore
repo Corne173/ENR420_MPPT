@@ -1,0 +1,52 @@
+# Local guide authoring assets
+*.tex
+fig/
+review_system_diagram-04.png
+split_rm0316_by_outline.py
+
+# LaTeX build outputs
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+main.pdf
+
+# STM32CubeIDE build outputs
+MPPT firmware/Debug/
+MPPT firmware/Release/
+*.o
+*.d
+*.su
+*.cyclo
+*.elf
+*.map
+*.list
+*.bin
+*.hex
+
+# Local IDE settings and OS files
+.vscode/
+MPPT firmware/.settings/
+desktop.ini
+Thumbs.db
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Internal working notes
+tasks/
