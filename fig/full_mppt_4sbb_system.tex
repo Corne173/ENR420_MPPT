@@ -1,0 +1,156 @@
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  x=1cm,
+  y=1cm,
+  line cap=round,
+  line join=round,
+  wire/.style={draw=UPBlue!70!cyan, line width=1.05pt},
+  flow/.style={draw=UPBlue!70!cyan, line width=0.95pt, -{Latex[length=2.2mm]}},
+  sense/.style={draw=UPBlue!70!cyan, line width=0.95pt, dashed, -{Latex[length=2.2mm]}},
+  signal/.style={draw=UPBlue!70!cyan, line width=0.85pt},
+  block/.style={draw=UPBlue!70!cyan, fill=white, line width=0.95pt, rounded corners=1pt, align=center, font=\small},
+  label/.style={font=\small\bfseries, text=UPBlue, fill=white, inner sep=1pt},
+  smalllabel/.style={font=\scriptsize, text=UPBlue, fill=white, inner sep=0.8pt}
+]
+
+% Solar PV array, arranged to match the left-hand panel bank in the reference.
+\foreach \r in {0,1} {
+  \foreach \c in {0,1,2,3} {
+    \begin{scope}[shift={(1.35+0.72*\c,2.72+1.06*\r)}]
+      \draw[draw=UPBlue!80!black, fill=PanelBlue!85, line width=0.45pt] (0,0) rectangle (0.55,0.90);
+      \foreach \gx in {0.11,0.22,0.33,0.44} {
+        \draw[UPLight, line width=0.22pt] (\gx,0.04) -- (\gx,0.86);
+      }
+      \foreach \gy in {0.15,0.30,0.45,0.60,0.75} {
+        \draw[UPLight, line width=0.22pt] (0.04,\gy) -- (0.51,\gy);
+      }
+    \end{scope}
+  }
+}
+\node[label] at (2.75,2.38) {Solar PV system};
+\node[label, rotate=90] at (4.28,3.86) {Panels};
+
+% Environmental inputs to the panel side.
+\node[label, anchor=east] (temp) at (1.02,4.78) {Temperature};
+\node[label, anchor=east] (irr) at (1.02,3.62) {Irradiance};
+\draw[flow] (temp.east) -- (1.30,4.70);
+\draw[flow] (irr.east) -- (1.30,3.54);
+
+% Power rails: PV array into the four-switch buck-boost stage.
+% The positive path is intentionally broken by the controlled switches and inductor
+% so the 4SBB topology is not shown as a continuous shorted rail.
+\draw[wire] (4.45,5.08) -- (5.78,5.08);
+\draw[wire] (4.45,2.24) -- (14.35,2.24);
+\draw[wire] (4.45,5.08) -- (4.45,4.60);
+\draw[wire] (4.45,2.24) -- (4.45,2.72);
+\node[smalllabel] at (4.23,4.88) {$+$};
+\node[smalllabel] at (4.23,2.42) {$-$};
+\draw[wire,<->] (4.70,4.86) -- (4.70,2.46);
+\node[smalllabel, rotate=90] at (4.92,3.68) {$V_{\mathrm{PV}}$};
+\draw[flow] (4.92,5.30) -- node[smalllabel, above] {$I_{\mathrm{in}}$} (5.52,5.30);
+
+% Input capacitor.
+\draw[wire] (5.35,5.08) -- (5.35,3.86);
+\draw[wire] (5.05,3.86) -- (5.65,3.86);
+\draw[wire] (5.05,3.42) -- (5.65,3.42);
+\draw[wire] (5.35,3.42) -- (5.35,2.24);
+\node[smalllabel, right] at (5.70,3.63) {$C_{\mathrm{in}}$};
+\node[smalllabel] at (5.00,4.04) {$+$};
+\node[smalllabel] at (5.00,3.25) {$-$};
+
+% Buck-side high switch, SW1.
+\draw[wire] (5.78,5.08) -- (6.04,5.08);
+\draw[wire, fill=white] (6.04,4.92) rectangle (6.64,5.24);
+\draw[wire] (6.04,5.08) -- (6.64,5.08);
+\draw[signal] (6.34,4.72) -- (6.34,4.92);
+\draw[wire] (6.64,5.08) -- (7.03,5.08);
+\node[label] at (6.34,5.48) {SW1};
+
+% Buck-side low switch, SW2.
+\draw[wire] (7.03,5.08) -- (7.03,4.30);
+\draw[wire, fill=white] (6.88,3.30) rectangle (7.18,4.30);
+\draw[wire] (7.03,4.30) -- (7.03,3.30);
+\draw[signal] (6.62,3.65) -- (6.88,3.65);
+\draw[wire] (7.03,3.30) -- (7.03,2.24);
+\node[label, anchor=east] at (6.74,3.96) {SW2};
+
+% Inductor between the buck and boost switching nodes.
+\draw[wire] (7.03,5.08) -- (7.36,5.08);
+\foreach \x in {7.36,7.64,7.92,8.20,8.48} {
+  \draw[wire] (\x,5.08) arc[start angle=180, end angle=0, radius=0.14];
+}
+\draw[wire] (8.76,5.08) -- (9.12,5.08);
+\node[label] at (8.06,5.48) {$L$};
+
+% Boost-side low switch, SW3.
+\draw[wire] (9.12,5.08) -- (9.12,4.30);
+\draw[wire, fill=white] (8.97,3.30) rectangle (9.27,4.30);
+\draw[wire] (9.12,4.30) -- (9.12,3.30);
+\draw[signal] (8.72,3.65) -- (8.97,3.65);
+\draw[wire] (9.12,3.30) -- (9.12,2.24);
+\node[label, anchor=west] at (9.34,3.96) {SW3};
+
+% Boost-side high switch, SW4.
+\draw[wire] (9.12,5.08) -- (9.48,5.08);
+\draw[wire, fill=white] (9.48,4.92) rectangle (10.08,5.24);
+\draw[wire] (9.48,5.08) -- (10.08,5.08);
+\draw[signal] (9.78,4.72) -- (9.78,4.92);
+\draw[wire] (10.08,5.08) -- (14.35,5.08);
+\node[label] at (9.78,5.48) {SW4};
+
+% Output capacitor and load/battery terminal.
+\draw[wire] (11.55,5.08) -- (11.55,3.86);
+\draw[wire] (11.25,3.86) -- (11.85,3.86);
+\draw[wire] (11.25,3.42) -- (11.85,3.42);
+\draw[wire] (11.55,3.42) -- (11.55,2.24);
+\node[smalllabel, left] at (11.20,3.63) {$C_{\mathrm{o}}$};
+\node[smalllabel] at (11.88,4.04) {$+$};
+\node[smalllabel] at (11.88,3.25) {$-$};
+
+\draw[wire] (14.35,5.08) -- (14.35,2.24);
+\draw[wire, fill=white] (13.88,3.08) rectangle (14.18,4.12);
+\draw[wire] (14.03,5.08) -- (14.03,4.12);
+\draw[wire] (14.03,3.08) -- (14.03,2.24);
+\node[smalllabel, align=center] at (13.24,3.62) {battery\\or load};
+\node[label, anchor=west] at (14.52,4.00) {$+$};
+\node[label, anchor=west] at (14.52,3.58) {$V_{\mathrm{o}}$};
+\node[label, anchor=west] at (14.52,3.16) {$-$};
+\draw[flow] (12.08,5.30) -- node[smalllabel, above] {$I_{\mathrm{o}}$} (12.76,5.30);
+
+% Controller and PWM generator blocks under the power circuit.
+\node[block, minimum width=4.25cm, minimum height=0.90cm] (controller) at (6.45,0.72)
+  {MPPT controller\\[-1pt]\scriptsize STM32 sensing + MPPT logic};
+\node[block, minimum width=2.25cm, minimum height=0.90cm] (pwm) at (10.20,0.72)
+  {PWM pulse\\[-1pt]generator};
+\draw[flow] (controller.east) -- (pwm.west);
+
+% Feedback paths, styled like the dashed paths in the reference.
+\draw[sense] (1.30,4.70) -- (1.30,1.18) -- node[smalllabel, above, pos=0.60] {Temperature} ([yshift=0.23cm]controller.west);
+\draw[sense] (1.00,3.54) -- (1.00,0.48) -- node[smalllabel, below, pos=0.58] {Irradiance} ([yshift=-0.23cm]controller.west);
+
+\draw[sense] (4.88,2.24) -- (4.88,1.48) --
+  node[smalllabel, above] {$V_{\mathrm{PV}},\,I_{\mathrm{in}}$} (5.48,1.48) -- (controller.north west);
+\draw[sense] (12.32,2.24) -- (12.32,1.48) --
+  node[smalllabel, above, pos=0.25] {$V_{\mathrm{o}},\,I_{\mathrm{o}}$} (7.65,1.48) -- (controller.north east);
+
+% PWM signal path into the converter: a common gate-drive bus with branches to
+% each controlled switch, making the switching-pulse direction unambiguous.
+\draw[flow] (pwm.east) -- (11.20,0.72) -- (11.20,2.72) --
+  node[smalllabel, above, pos=0.45] {switching pulses} (9.78,2.72);
+\draw[signal] (9.78,2.72) -- (6.34,2.72);
+\draw[signal,-{Latex[length=1.6mm]}] (6.34,2.72) -- (6.34,4.72);
+\draw[signal,-{Latex[length=1.6mm]}] (7.00,2.72) -- (7.00,3.65) -- (6.62,3.65);
+\draw[signal,-{Latex[length=1.6mm]}] (8.72,2.72) -- (8.72,3.65);
+\draw[signal,-{Latex[length=1.6mm]}] (9.78,2.72) -- (9.78,4.72);
+\node[smalllabel, anchor=west] at (9.95,2.50) {gate-drive bus};
+
+% Pulse train icon next to the PWM generator, as in the reference figure.
+\draw[UPBlue!70!cyan, line width=0.85pt]
+  (11.78,0.96) -- (11.94,0.96) -- (11.94,1.31) -- (12.12,1.31) --
+  (12.12,0.96) -- (12.30,0.96) -- (12.30,1.31) -- (12.48,1.31) --
+  (12.48,0.96) -- (12.66,0.96) -- (12.66,1.31) -- (12.84,1.31) --
+  (12.84,0.96);
+
+\node[label] at (9.25,5.92) {Four-switch synchronous buck-boost converter};
+\end{tikzpicture}%
+}

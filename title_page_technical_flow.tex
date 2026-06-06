@@ -1,0 +1,76 @@
+\begin{titlepage}
+  \thispagestyle{empty}
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[white] (current page.south west) rectangle (current page.north east);
+    \fill[UPLight] (current page.south west) rectangle ($(current page.south east)+(0,42mm)$);
+    \fill[UPBlue] (current page.north west) rectangle ($(current page.north east)+(0,-26mm)$);
+    \fill[UPAccent] ($(current page.north west)+(0,-26mm)$) rectangle ($(current page.north east)+(0,-28mm)$);
+
+    \foreach \y in {48,58,...,246}
+      \draw[TableRule!12,line width=0.2pt] ($(current page.south west)+(0,\y mm)$) -- ($(current page.south east)+(0,\y mm)$);
+    \foreach \x in {16,28,...,194}
+      \draw[TableRule!10,line width=0.2pt] ($(current page.south west)+(\x mm,42mm)$) -- ($(current page.north west)+(\x mm,-34mm)$);
+
+    \node[anchor=north west,inner sep=0pt] at ($(current page.north west)+(14mm,-8mm)$)
+      {\includegraphics[width=0.29\paperwidth]{up_logo_white_transparent.png}};
+    \node[anchor=north east,align=right,text=white,font=\bfseries\large] at ($(current page.north east)+(-14mm,-10mm)$)
+      {Department of Electrical, Electronic\\and Computer Engineering};
+
+    \draw[UPBlue!35,line width=0.8pt] ($(current page.north west)+(14mm,-42mm)$) -- ($(current page.north east)+(-14mm,-42mm)$);
+    \draw[UPAccent,line width=1.0pt] ($(current page.north west)+(14mm,-58mm)$) -- ($(current page.north west)+(44mm,-58mm)$);
+
+    \node[anchor=south east,opacity=0.10] at ($(current page.south east)+(-8mm,50mm)$)
+      {\includegraphics[width=0.52\paperwidth]{system_block_diagram.png}};
+  \end{tikzpicture}
+
+  \vspace*{52mm}
+  \noindent
+  {\fontsize{30}{35}\selectfont\bfseries\color{UPBlue} MPPT Circuit Student\\Implementation Guide\par}
+  \vspace{5mm}
+  {\Large\bfseries\color{CoverInk} Module ENR 420\par}
+
+  \vspace{14mm}
+  \begin{center}
+    \begin{tikzpicture}[
+      module/.style={draw=UPBlue!80,fill=white,rounded corners=1.3mm,minimum width=29mm,minimum height=15mm,align=center,font=\scriptsize\bfseries},
+      sensor/.style={draw=SolarGreen!80!black,fill=SolarGreen!10,rounded corners=1.3mm,minimum width=29mm,minimum height=15mm,align=center,font=\scriptsize\bfseries},
+      arrow/.style={-{Latex[length=2.4mm]},draw=UPAccent,line width=0.9pt},
+      loop/.style={-{Latex[length=2.0mm]},draw=UPBlue!70,line width=0.75pt}
+    ]
+      \node[module,fill=PanelBlue!10] (pv) {PV\\Array};
+      \node[sensor,right=11mm of pv] (sense) {Voltage / Current\\Sensing};
+      \node[module,right=11mm of sense] (conv) {Four-switch\\Buck-boost};
+      \node[module,fill=SolarGreen!10,right=11mm of conv] (load) {Battery\\or Load};
+      \node[module,fill=UPLight,below=15mm of conv,minimum width=40mm] (ctrl) {STM32 MPPT\\Control Loop};
+
+      \draw[arrow] (pv) -- (sense);
+      \draw[arrow] (sense) -- (conv);
+      \draw[arrow] (conv) -- (load);
+      \draw[loop] (sense.south) |- (ctrl.west);
+      \draw[loop] (ctrl.east) -| (conv.south);
+
+      \draw[UPBlue!45,line width=0.45pt] ($(pv.south west)+(4mm,4mm)$) -- ($(pv.south east)+(-4mm,4mm)$);
+      \draw[SolarGreen!65!black,line width=0.55pt] ($(load.south west)+(5mm,4mm)$) -- ($(load.south east)+(-5mm,4mm)$);
+    \end{tikzpicture}
+  \end{center}
+
+  \vfill
+  \begin{tcolorbox}[
+    enhanced,
+    colback=UPLight,
+    colframe=UPBlue,
+    width=\textwidth,
+    boxrule=0.9pt,
+    arc=1.2mm,
+    left=5mm,right=5mm,top=4mm,bottom=4mm,
+    borderline west={2.4pt}{0pt}{UPAccent}]
+    \large
+    A practical guide to the MPPT circuit, sensing interfaces, gate-driver control, STM32 pin mapping, firmware architecture, and safe laboratory bring-up used in Practicals 1 and 3.
+  \end{tcolorbox}
+
+  \vspace{8mm}
+  \begin{center}
+    {\small\bfseries\color{UPBlue} Photovoltaic input \textbar{} measured power \textbar{} converter command \textbar{} safe embedded control}
+  \end{center}
+  \vspace*{4mm}
+\end{titlepage}

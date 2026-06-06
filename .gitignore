@@ -1,6 +1,4 @@
-# Local guide authoring assets
-*.tex
-fig/
+# Local generated authoring helpers
 review_system_diagram-04.png
 split_rm0316_by_outline.py
 

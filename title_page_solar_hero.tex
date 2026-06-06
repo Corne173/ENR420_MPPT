@@ -1,0 +1,52 @@
+\begin{titlepage}
+  \thispagestyle{empty}
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[white] (current page.south west) rectangle (current page.north east);
+
+    \begin{scope}
+      \clip (current page.north west) rectangle ($(current page.north east)+(0,-176mm)$);
+      \node[anchor=north,inner sep=0pt] at (current page.north)
+        {\includegraphics[height=176mm]{solar_hero_cover.png}};
+    \end{scope}
+
+    \fill[UPBlue,opacity=0.74] (current page.north west) rectangle ($(current page.north west)+(139mm,-176mm)$);
+    \fill[black,opacity=0.16] (current page.north west) rectangle ($(current page.north east)+(0,-176mm)$);
+    \fill[UPAccent] ($(current page.north west)+(0,-176mm)$) rectangle ($(current page.north east)+(0,-179mm)$);
+    \fill[UPLight] (current page.south west) rectangle ($(current page.south east)+(0,118mm)$);
+    \fill[SolarGreen] (current page.south west) rectangle ($(current page.south east)+(0,8mm)$);
+
+    \node[anchor=north west,inner sep=0pt] at ($(current page.north west)+(15mm,-10mm)$)
+      {\includegraphics[width=0.30\paperwidth]{up_logo_white_transparent.png}};
+    \node[anchor=north east,align=right,text=white,font=\bfseries\normalsize] at ($(current page.north east)+(-15mm,-13mm)$)
+      {Department of Electrical, Electronic\\and Computer Engineering};
+
+    \node[anchor=north west,align=left,text width=0.60\paperwidth] at ($(current page.north west)+(17mm,-57mm)$)
+      {{\color{UPAccent}\rule{24mm}{1.2pt}}\par
+       \vspace{4mm}
+       {\fontsize{29}{34}\selectfont\bfseries\color{white} MPPT Circuit\\Student Implementation\\Guide\par}
+       \vspace{6mm}
+       {\Large\bfseries\color{white} Module ENR 420\par}
+       };
+
+    \node[anchor=north west,align=left,text width=0.64\paperwidth] at ($(current page.south west)+(22mm,101mm)$)
+      {{\large\bfseries\color{UPBlue} Photovoltaic maximum power point tracking\\for safe laboratory implementation\par}
+       \vspace{3mm}
+       {\normalsize\color{CoverInk} A practical guide to the MPPT circuit, sensing interfaces, gate\mbox{-}driver control, STM32 pin mapping, firmware architecture, and safe laboratory bring-up used in Practicals 1 and 3.\par}};
+
+    \node[anchor=north east,align=center] at ($(current page.south east)+(-24mm,101mm)$)
+      {\begin{tikzpicture}[
+        small/.style={draw=UPBlue!70,fill=white,rounded corners=1mm,minimum width=24mm,minimum height=8mm,align=center,font=\scriptsize\bfseries},
+        arrow/.style={-{Latex[length=1.8mm]},draw=UPAccent,line width=0.65pt}
+      ]
+        \node[small,fill=PanelBlue!10] (pv) {PV input};
+        \node[small,below=5mm of pv] (conv) {MPPT};
+        \node[small,fill=SolarGreen!12,below=5mm of conv] (load) {Load};
+        \draw[arrow] (pv) -- (conv);
+        \draw[arrow] (conv) -- (load);
+      \end{tikzpicture}};
+
+    \draw[UPBlue!35,line width=0.8pt] ($(current page.south west)+(22mm,41mm)$) -- ($(current page.south east)+(-22mm,41mm)$);
+    \node[anchor=south,align=center,text=UPBlue,font=\small\bfseries] at ($(current page.south)+(0,20mm)$)
+      {solar energy management \textbar{} power conversion \textbar{} embedded control};
+  \end{tikzpicture}
+\end{titlepage}
