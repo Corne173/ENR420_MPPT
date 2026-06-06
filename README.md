@@ -22,6 +22,13 @@ This repository supports the ENR420 MPPT circuit implementation project. It brin
 | [STM32F reference manual chapters](Manual%20-%20STM32F/) | Split STM32F303 reference-manual sections for easier lookup. |
 | [Full STM32 reference manual PDF](rm0316-stm32f303xbcde-stm32f303x68-stm32f328x8-stm32f358xc-stm32f398xe-advanced-armbased-mcus-stmicroelectronics.pdf) | Complete ST RM0316 reference manual. |
 | [Serial monitor GUI](mppt_serial_gui.py) | Optional Python helper for monitoring serial data from the controller. |
+| [Four-switch buck-boost PSIM schematic](Four_switch_buck_boost.psimsch) | Optional PSIM schematic for simulating the converter and exploring its operating principles. |
+
+## Further Reading
+
+Students who want more background on four-switch buck-boost converter control strategies may find this review useful:
+
+- Lin, G.; Li, Y.; Zhang, Z. "A Review of Control Strategies for Four-Switch Buck-Boost Converters." *World Electric Vehicle Journal* 2025, 16(6), 315. <https://doi.org/10.3390/wevj16060315>
 
 ## Repository Layout
 
@@ -31,6 +38,7 @@ This repository supports the ENR420 MPPT circuit implementation project. It brin
 |-- MPPT firmware/                          # STM32CubeIDE firmware project
 |-- Manual - STM32F/                        # STM32 reference manual split by section
 |-- rm0316-...-stmicroelectronics.pdf       # Full STM32F reference manual
+|-- Four_switch_buck_boost.psimsch          # Optional PSIM converter simulation schematic
 |-- mppt_serial_gui.py                      # Optional serial monitoring GUI
 |-- requirements-mppt-gui.txt               # Python dependency list for the GUI
 |-- .gitignore
