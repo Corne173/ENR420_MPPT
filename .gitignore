@@ -1,0 +1,44 @@
+# Obsolete DriveFS metadata placeholders; active Git data lives off-drive
+.git-data/
+.git-old-delete/
+
+# Local guide authoring assets
+*.tex
+fig/
+review_system_diagram-04.png
+split_rm0316_by_outline.py
+
+# LaTeX build outputs
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+main.pdf
+
+# Local IDE settings and OS files
+.vscode/
+desktop.ini
+Thumbs.db
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Internal working notes
+tasks/
+
+

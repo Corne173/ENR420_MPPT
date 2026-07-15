@@ -1,0 +1,50 @@
+# STM32CubeIDE build directories
+/Debug/
+/Release/
+/build/
+/cmake-build-*/
+
+# Compiler, linker, and analysis outputs
+*.o
+*.obj
+*.a
+*.lib
+*.d
+*.dep
+*.su
+*.cyclo
+*.gcda
+*.gcno
+*.elf
+*.axf
+*.map
+*.list
+*.lst
+*.bin
+*.hex
+*.s19
+*.srec
+
+# CMake and Ninja outputs from accidental in-source builds
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/install_manifest.txt
+/Makefile
+/build.ninja
+/.ninja_deps
+/.ninja_log
+/compile_commands.json
+/CMakeUserPresets.json
+
+# STM32CubeMX and IDE machine-local state
+/mx.scratch
+/.metadata/
+**/.settings/language.settings.xml
+**/.settings/*.store.json
+**/.settings/*sfrview.prefs
+**/.settings/stm32cubeide.project.prefs
+
+# Local editor caches
+/.cache/
+/.clangd/
