@@ -1,7 +1,11 @@
 """Minimal serial GUI for the ENR MPPT controller.
 
-Expected telemetry packet:
-ADC,ms,seq,i_in_raw,i_out_raw,v_out_raw,v_in_raw,valid,temp0_c,temp1_c,irr_w_m2,state,fault
+Expected firmware telemetry packet:
+i_in_raw,i_out_raw,v_out_raw,v_in_raw,valid,temp0_c,temp1_c,irr_w_m2,state,fault
+
+The PC prepends ``unix_ms`` when it receives a telemetry packet. Legacy
+``ADC,ms,seq,...`` firmware packets are accepted and displayed in the new
+format as well.
 """
 
 from __future__ import annotations
@@ -38,9 +42,14 @@ I_OUT_OFFSET_COUNTS = 2030
 
 
 @dataclass(frozen=True)
-class AdcPacket:
-    timestamp_ms: int
-    sequence: int
+class SerialLine:
+    text: str
+    received_unix_ms: int
+
+
+@dataclass(frozen=True)
+class TelemetryPacket:
+    unix_ms: int
     i_in_raw: int
     i_out_raw: int
     v_out_raw: int
@@ -89,7 +98,12 @@ def output_voltage_from_raw(raw_count: int) -> float:
 
 
 class SerialReader(threading.Thread):
-    def __init__(self, port: str, baudrate: int, output_queue: queue.Queue[str]):
+    def __init__(
+        self,
+        port: str,
+        baudrate: int,
+        output_queue: queue.Queue[str | SerialLine],
+    ):
         super().__init__(daemon=True)
         self._port_name = port
         self._baudrate = baudrate
@@ -120,7 +134,12 @@ class SerialReader(threading.Thread):
             if raw_line:
                 text = raw_line.decode("utf-8", errors="replace").strip()
                 if text:
-                    self._output_queue.put(text)
+                    self._output_queue.put(
+                        SerialLine(
+                            text=text,
+                            received_unix_ms=time.time_ns() // 1_000_000,
+                        )
+                    )
 
         try:
             if self.serial_port and self.serial_port.is_open:
@@ -143,12 +162,9 @@ class MpptSerialGui(tk.Tk):
         self.minsize(1040, 680)
 
         self.reader: SerialReader | None = None
-        self.serial_queue: queue.Queue[str] = queue.Queue()
+        self.serial_queue: queue.Queue[str | SerialLine] = queue.Queue()
         self.terminal_line_count = 0
-        self.last_sequence: int | None = None
-        self.dropped_packets = 0
 
-        self.time_points: Deque[int] = deque(maxlen=MAX_POINTS)
         self.current_buffers: dict[str, Deque[float | None]] = {
             "i_in_a": deque(maxlen=MAX_POINTS),
             "i_out_a": deque(maxlen=MAX_POINTS),
@@ -166,11 +182,10 @@ class MpptSerialGui(tk.Tk):
         }
 
         self.connection_status = tk.StringVar(value="Disconnected")
-        self.packet_status = tk.StringVar(value="No ADC packets received")
+        self.packet_status = tk.StringVar(value="No telemetry packets received")
         self.state_value = tk.StringVar(value="-")
         self.fault_value = tk.StringVar(value="-")
         self.valid_value = tk.StringVar(value="-")
-        self.drop_value = tk.StringVar(value="0")
         self.measurement_values = {
             "i_in_a": tk.StringVar(value="-"),
             "i_out_a": tk.StringVar(value="-"),
@@ -280,9 +295,8 @@ class MpptSerialGui(tk.Tk):
         self._add_value(summary, "Temp0 C", self.sensor_values["temp0_c"], 5)
         self._add_value(summary, "Temp1 C", self.sensor_values["temp1_c"], 6)
         self._add_value(summary, "Irr W/m2", self.sensor_values["irr_w_m2"], 7)
-        self._add_value(summary, "Dropped", self.drop_value, 8)
-        self._add_value(summary, "State", self.state_value, 9)
-        self._add_value(summary, "Fault", self.fault_value, 10)
+        self._add_value(summary, "State", self.state_value, 8)
+        self._add_value(summary, "Fault", self.fault_value, 9)
 
         plot_frame = ttk.Frame(left)
         plot_frame.grid(row=1, column=0, sticky="nsew")
@@ -311,7 +325,11 @@ class MpptSerialGui(tk.Tk):
         right.rowconfigure(1, weight=1)
         right.columnconfigure(0, weight=1)
 
-        ttk.Label(right, text="Serial terminal", font=("Segoe UI", 11, "bold")).grid(
+        ttk.Label(
+            right,
+            text="Serial terminal (telemetry uses PC Unix ms)",
+            font=("Segoe UI", 11, "bold"),
+        ).grid(
             row=0,
             column=0,
             sticky="w",
@@ -428,10 +446,28 @@ class MpptSerialGui(tk.Tk):
     def _process_serial_queue(self) -> None:
         while True:
             try:
-                line = self.serial_queue.get_nowait()
+                item = self.serial_queue.get_nowait()
             except queue.Empty:
                 break
 
+            if isinstance(item, SerialLine):
+                packet = self._parse_telemetry_packet(
+                    item.text,
+                    item.received_unix_ms,
+                )
+                if packet is not None:
+                    self._append_terminal(
+                        self._format_telemetry_line(
+                            item.text,
+                            item.received_unix_ms,
+                        )
+                    )
+                    self._handle_packet(packet)
+                else:
+                    self._append_terminal(item.text)
+                continue
+
+            line = item
             if line.startswith("__CONNECTED__:"):
                 port = line.split(":", 1)[1]
                 self.connection_status.set(f"Connected to {port}")
@@ -454,38 +490,39 @@ class MpptSerialGui(tk.Tk):
                 continue
 
             self._append_terminal(line)
-            packet = self._parse_adc_packet(line)
-            if packet:
-                self._handle_packet(packet)
 
         self.after(50, self._process_serial_queue)
 
-    def _parse_adc_packet(self, line: str) -> AdcPacket | None:
+    def _parse_telemetry_packet(
+        self,
+        line: str,
+        received_unix_ms: int,
+    ) -> TelemetryPacket | None:
         parts = line.split(",")
-        if parts[0] != "ADC":
-            return None
 
         try:
-            if len(parts) >= 13:
-                return AdcPacket(
-                    timestamp_ms=int(parts[1]),
-                    sequence=int(parts[2]),
-                    i_in_raw=int(parts[3]),
-                    i_out_raw=int(parts[4]),
-                    v_out_raw=int(parts[5]),
-                    v_in_raw=int(parts[6]),
-                    valid=parts[7] == "1",
-                    temp0_c=parse_optional_float(parts[8]),
-                    temp1_c=parse_optional_float(parts[9]),
-                    irr_w_m2=parse_optional_float(parts[10]),
-                    state=parts[11],
-                    fault=parts[12],
+            if parts[0] == "ADC" and len(parts) >= 13:
+                parts = parts[3:]
+
+            if len(parts) >= 10 and parts[0] != "ADC":
+                return TelemetryPacket(
+                    unix_ms=received_unix_ms,
+                    i_in_raw=int(parts[0]),
+                    i_out_raw=int(parts[1]),
+                    v_out_raw=int(parts[2]),
+                    v_in_raw=int(parts[3]),
+                    valid=parts[4] == "1",
+                    temp0_c=parse_optional_float(parts[5]),
+                    temp1_c=parse_optional_float(parts[6]),
+                    irr_w_m2=parse_optional_float(parts[7]),
+                    state=parts[8],
+                    fault=parts[9],
                 )
 
+            # Compatibility with the older packet that had no sensor fields.
             if len(parts) >= 10:
-                return AdcPacket(
-                    timestamp_ms=int(parts[1]),
-                    sequence=int(parts[2]),
+                return TelemetryPacket(
+                    unix_ms=received_unix_ms,
                     i_in_raw=int(parts[3]),
                     i_out_raw=int(parts[4]),
                     v_out_raw=int(parts[5]),
@@ -502,17 +539,19 @@ class MpptSerialGui(tk.Tk):
 
         return None
 
-    def _handle_packet(self, packet: AdcPacket) -> None:
-        if self.last_sequence is not None and packet.sequence != self.last_sequence + 1:
-            self.dropped_packets += max(0, packet.sequence - self.last_sequence - 1)
-        self.last_sequence = packet.sequence
+    def _format_telemetry_line(self, line: str, received_unix_ms: int) -> str:
+        parts = line.split(",")
+        if parts[0] == "ADC":
+            parts = parts[3:]
+        return f"{received_unix_ms},{','.join(parts)}"
+
+    def _handle_packet(self, packet: TelemetryPacket) -> None:
 
         i_in_a = input_current_from_raw(packet.i_in_raw)
         i_out_a = output_current_from_raw(packet.i_out_raw)
         v_out_v = output_voltage_from_raw(packet.v_out_raw)
         v_in_v = input_voltage_from_raw(packet.v_in_raw)
 
-        self.time_points.append(packet.timestamp_ms)
         self.current_buffers["i_in_a"].append(i_in_a)
         self.current_buffers["i_out_a"].append(i_out_a)
         self.voltage_buffers["v_in_v"].append(v_in_v)
@@ -531,10 +570,7 @@ class MpptSerialGui(tk.Tk):
         self.state_value.set(packet.state)
         self.fault_value.set(packet.fault)
         self.valid_value.set("yes" if packet.valid else "no")
-        self.drop_value.set(str(self.dropped_packets))
-        self.packet_status.set(
-            f"Last packet: t={packet.timestamp_ms} ms, seq={packet.sequence}"
-        )
+        self.packet_status.set(f"Last packet: unix_ms={packet.unix_ms}")
 
     def _append_terminal(self, text: str) -> None:
         self.terminal.configure(state=tk.NORMAL)

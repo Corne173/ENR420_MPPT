@@ -72,7 +72,7 @@ In this section, "implemented" means the functionality is present in the current
 | Control structure | `main.c` contains a cooperative main loop and MPPT state machine with `INIT`, `IDLE`, `STARTUP`, `RUN`, and `FAULT` states. |
 | Measurements | ADC channels are polled and converted from raw counts to voltage, current, and PV power estimates. Current-sensor zero offsets are captured during initialization. |
 | Serial interface | The firmware provides start, stop, fault reset, status, and help commands over the serial console. |
-| Telemetry | Raw ADC telemetry packets are transmitted for debugging measurements and controller state. |
+| Telemetry | Raw measurement packets are transmitted for debugging; the optional PC GUI prepends PC receive time as Unix milliseconds. |
 | PWM and safety scaffold | TIM1 complementary PWM duty commands, gate-driver disable control, duty clamping, startup duty, ADC saturation checking, and latched fault handling are present. |
 | Irradiance sensor scaffold | `IrradianceSensor_Task()` is called from the main loop and contains a disabled RS485/Modbus polling skeleton with request building, CRC checking, RS485 direction control, and response parsing placeholders. |
 
@@ -116,7 +116,7 @@ To create an issue:
 
 GitHub's own guide is here: [Creating an issue](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-an-issue).
 
-When creating the issue, include what you were trying to do, what happened, what you expected, and enough detail for someone else to reproduce the problem. For firmware issues, include the current state, fault code, serial command used, any `ADC,...` telemetry line, relevant code changes, and the hardware setup.
+When creating the issue, include what you were trying to do, what happened, what you expected, and enough detail for someone else to reproduce the problem. For firmware issues, include the current state, fault code, serial command used, a telemetry line, relevant code changes, and the hardware setup.
 
 Do not post private information, student numbers, passwords, or anything unrelated to the project.
 
