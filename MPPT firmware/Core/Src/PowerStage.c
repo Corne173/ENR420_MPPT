@@ -43,6 +43,14 @@ bool PowerStage_Enable(void)
 {
   if (!power_stage_pwm_running)
   {
+    uint32_t wait_start_ms;
+
+    /* TIM1 channel 3 already keeps the counter running for ADC triggering.
+     * Reassert both gate disables so enabling PWM channels mid-period cannot
+     * leak a shortened first pulse to the power stage. */
+    HAL_GPIO_WritePin(BST_DIS_GPIO_Port, BST_DIS_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(BCK_DIS_GPIO_Port, BCK_DIS_Pin, GPIO_PIN_SET);
+
     /* Start the high-side/low-side complementary outputs before releasing the
      * gate-driver disable pins. If any start call fails, return to the safe state. */
     if ((HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) != HAL_OK) ||
@@ -55,6 +63,19 @@ bool PowerStage_Enable(void)
     }
 
     power_stage_pwm_running = true;
+
+    /* Release the drivers only just after a clean PWM rollover. */
+    __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
+    wait_start_ms = HAL_GetTick();
+    while (__HAL_TIM_GET_FLAG(&htim1, TIM_FLAG_UPDATE) == RESET)
+    {
+      if ((HAL_GetTick() - wait_start_ms) > 1U)
+      {
+        PowerStage_Disable();
+        return false;
+      }
+    }
+    __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
   }
 
   /* RESET clears the active-high disable signal, allowing the drivers to switch. */

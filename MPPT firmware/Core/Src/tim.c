@@ -86,10 +86,22 @@ void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
+
+  /* TIM1 channel 3 is an internal-only ADC trigger. At 128 MHz with ARR=511,
+   * CCR3=378 leaves 134 timer ticks before the next 250 kHz period boundary.
+   * That is just enough for two 19.5-cycle, 12-bit ADC ranks at 64 MHz. */
+  sConfigOC.OCMode = TIM_OCMODE_TIMING;
+  sConfigOC.Pulse = 378;
+  if (HAL_TIM_OC_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 7;
+  /* TIM1 runs from the 128 MHz PLL VCO output. DTG=13 gives 101.6 ns,
+   * matching the implementation guide's approximately 100 ns requirement. */
+  sBreakDeadTimeConfig.DeadTime = 13;
   sBreakDeadTimeConfig.BreakState = TIM_BREAK_ENABLE;
   sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
   sBreakDeadTimeConfig.BreakFilter = 15;

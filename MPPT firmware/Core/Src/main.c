@@ -203,7 +203,17 @@ int main(void)
           }
           else
           {
-            enterFault(FAULT_ADC_READ);
+            const Measurements_t *measurements = Measurements_GetLatest();
+            const Fault_t acquisition_fault = Measurements_GetAcquisitionFault();
+            if (!measurements->valid)
+            {
+              enterFault((acquisition_fault != FAULT_NONE) ? acquisition_fault
+                                                           : FAULT_ADC_READ);
+            }
+            else
+            {
+              enterFault(FAULT_ADC_RANGE);
+            }
           }
         }
         break;
@@ -251,7 +261,9 @@ int main(void)
           stop_requested = false;
           mppt_start_requested = false;
           mppt_fault = FAULT_NONE;
-          setState(STATE_IDLE);
+          /* Rebuild the complete measurement chain instead of merely clearing
+           * the visible fault and immediately tripping again on a stopped DMA. */
+          controllerInit();
         }
         break;
     }
@@ -325,29 +337,47 @@ void SystemClock_Config(void)
 //Change to converter initialisation
 void controllerInit(void)
 {
+  Fault_t acquisition_fault;
+
   /* The first firmware action for the converter controller is always safe output. */
   PowerStage_Disable();
 
+  /* Calibration requires disabled ADCs. This is also the cleanup path when a
+   * deliberate fault reset restarts acquisition after a DMA/ADC failure. */
+  Measurements_StopSynchronized();
+
   /* ADC calibration compensates internal ADC errors before readings are trusted. */
-  if ((HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK) ||
-      (HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) != HAL_OK))
+  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
   {
-    enterFault(FAULT_ADC_READ);
+    enterFault(FAULT_ADC1_CALIBRATION);
+    return;
+  }
+  if (HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) != HAL_OK)
+  {
+    enterFault(FAULT_ADC2_CALIBRATION);
     return;
   }
 
-  /* Take one measurement before offset calibration so the current-sensor zero
-   * points can be stored while no converter current should be flowing. */
-  if (!Measurements_Update())
+  /* Arm both independent DMA streams before TIM1 starts their shared CC3 trigger.
+   * The helper waits for complete buffers and publishes the first measurement. */
+  acquisition_fault = Measurements_StartSynchronized();
+  if (acquisition_fault != FAULT_NONE)
   {
-    enterFault(FAULT_ADC_READ);
+    enterFault(acquisition_fault);
     return;
   }
 
+  /* Store the no-load current-sensor levels from PWM-synchronised samples. */
   Measurements_CaptureZeroCurrentOffsets();
 
   /* Re-read after offset capture so converted current values use the new offsets. */
-  (void)Measurements_Update();
+  if (!Measurements_Update())
+  {
+    acquisition_fault = Measurements_GetAcquisitionFault();
+    enterFault((acquisition_fault != FAULT_NONE) ? acquisition_fault
+                                                 : FAULT_ADC_READ);
+    return;
+  }
   setState(STATE_IDLE);
 }
 
@@ -439,7 +469,9 @@ bool runFastTasks(void)
   {
     if (current_state != STATE_FAULT)
     {
-      enterFault(FAULT_ADC_READ);
+      const Fault_t acquisition_fault = Measurements_GetAcquisitionFault();
+      enterFault((acquisition_fault != FAULT_NONE) ? acquisition_fault
+                                                   : FAULT_ADC_READ);
       return false;
     }
 
@@ -524,6 +556,42 @@ const char *getFaultName(Fault_t fault)
   {
     case FAULT_NONE:
       return "NONE";
+    case FAULT_ADC1_CALIBRATION:
+      return "ADC1_CAL";
+    case FAULT_ADC2_CALIBRATION:
+      return "ADC2_CAL";
+    case FAULT_ADC1_DMA_START:
+      return "ADC1_DMA_START";
+    case FAULT_ADC2_DMA_START:
+      return "ADC2_DMA_START";
+    case FAULT_ADC_TRIGGER_START:
+      return "ADC_TRIGGER_START";
+    case FAULT_ADC_TRIGGER_LOST:
+      return "ADC_TRIGGER_LOST";
+    case FAULT_ADC1_FIRST_BUFFER:
+      return "ADC1_NO_BUFFER";
+    case FAULT_ADC2_FIRST_BUFFER:
+      return "ADC2_NO_BUFFER";
+    case FAULT_ADC_BOTH_FIRST_BUFFER:
+      return "ADC_BOTH_NO_BUFFER";
+    case FAULT_ADC1_OVERRUN:
+      return "ADC1_OVERRUN";
+    case FAULT_ADC2_OVERRUN:
+      return "ADC2_OVERRUN";
+    case FAULT_ADC1_DMA_TRANSFER:
+      return "ADC1_DMA_TRANSFER";
+    case FAULT_ADC2_DMA_TRANSFER:
+      return "ADC2_DMA_TRANSFER";
+    case FAULT_ADC1_INTERNAL:
+      return "ADC1_INTERNAL";
+    case FAULT_ADC2_INTERNAL:
+      return "ADC2_INTERNAL";
+    case FAULT_ADC1_STALE:
+      return "ADC1_STALE";
+    case FAULT_ADC2_STALE:
+      return "ADC2_STALE";
+    case FAULT_ADC_SNAPSHOT:
+      return "ADC_SNAPSHOT";
     case FAULT_ADC_READ:
       return "ADC_READ";
     case FAULT_ADC_RANGE:
