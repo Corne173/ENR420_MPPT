@@ -64,7 +64,9 @@ void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  /* Route channel 3's internal compare waveform onto TIM1 TRGO. Both ADCs use
+   * this dedicated trigger path, avoiding dependence on the direct CC3 route. */
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC3REF;
   sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
@@ -87,10 +89,12 @@ void MX_TIM1_Init(void)
     Error_Handler();
   }
 
-  /* TIM1 channel 3 is an internal-only ADC trigger. At 128 MHz with ARR=511,
+  /* TIM1 channel 3 is the internal-only source for ADC TRGO. PWM2 keeps OC3REF
+   * low at the period boundary and creates one rising edge at CCR3. At 128 MHz
+   * with ARR=511,
    * CCR3=378 leaves 134 timer ticks before the next 250 kHz period boundary.
    * That is just enough for two 19.5-cycle, 12-bit ADC ranks at 64 MHz. */
-  sConfigOC.OCMode = TIM_OCMODE_TIMING;
+  sConfigOC.OCMode = TIM_OCMODE_PWM2;
   sConfigOC.Pulse = 378;
   if (HAL_TIM_OC_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
   {

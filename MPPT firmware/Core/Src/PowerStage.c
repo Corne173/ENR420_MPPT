@@ -7,9 +7,6 @@
 #include "PowerStage.h"
 #include "tim.h"
 
-#define POWER_STAGE_DUTY_MIN (0.0f)
-#define POWER_STAGE_DUTY_MAX (0.95f)
-
 static uint32_t Pwm_DutyToCompare(float duty);
 static float PowerStage_ClampFloat(float value, float min_value, float max_value);
 

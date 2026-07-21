@@ -6,6 +6,7 @@
 
 #include "TemperatureSensor.h"
 
+#include "SerialConsole.h"
 #include "Timebase.h"
 #include "ds18b20.h"
 #include "main.h"
@@ -13,6 +14,7 @@
 #include "tim.h"
 
 #include <stdint.h>
+#include <stdio.h>
 
 #define TEMPERATURE_SENSOR_MAX_COUNT       (5U)
 #define TEMPERATURE_TRANSFER_TIMEOUT_MS    (25U)
@@ -33,6 +35,9 @@ static uint32_t temperature_state_started_ms = 0U;
 static uint32_t temperature_start_delay_ms = 0U;
 static uint8_t temperature_sensor_count = 0U;
 static uint8_t temperature_sensor_index = 0U;
+static volatile uint32_t temperature_tim_callback_count = 0U;
+static uint32_t temperature_transfer_callback_start = 0U;
+static bool temperature_failure_reported = false;
 
 /* A complete set is staged here, then published together in temp_c. */
 static int16_t pending_temp_c[TEMPERATURE_SENSOR_MAX_COUNT];
@@ -46,6 +51,7 @@ static int16_t temp_c[TEMPERATURE_SENSOR_MAX_COUNT] =
 };
 
 static void ds18_tim_cb(TIM_HandleTypeDef *htim);
+static void TemperatureSensor_PrintBusDebug(const char *phase);
 
 /**
   * @brief  Advances continuous temperature acquisition without waiting.
@@ -73,6 +79,7 @@ void TemperatureSensor_Task(void)
                 return;
             }
 
+            temperature_transfer_callback_start = temperature_tim_callback_count;
             error = ds18b20_cnv(&ds18);
             if (error != OW_ERR_NONE)
             {
@@ -91,6 +98,7 @@ void TemperatureSensor_Task(void)
                                         temperature_state_started_ms,
                                         TEMPERATURE_TRANSFER_TIMEOUT_MS))
                 {
+                    TemperatureSensor_PrintBusDebug("convert-timeout");
                     ow_abort(&ds18.ow);
                     break;
                 }
@@ -121,6 +129,7 @@ void TemperatureSensor_Task(void)
             }
 
             temperature_sensor_index = 0U;
+            temperature_transfer_callback_start = temperature_tim_callback_count;
             error = ds18b20_req_read(&ds18, temperature_sensor_index);
             if (error != OW_ERR_NONE)
             {
@@ -139,6 +148,7 @@ void TemperatureSensor_Task(void)
                                         temperature_state_started_ms,
                                         TEMPERATURE_TRANSFER_TIMEOUT_MS))
                 {
+                    TemperatureSensor_PrintBusDebug("read-timeout");
                     ow_abort(&ds18.ow);
                     break;
                 }
@@ -165,10 +175,12 @@ void TemperatureSensor_Task(void)
                 temperature_state = TEMPERATURE_START_CONVERSION;
                 temperature_state_started_ms = now_ms;
                 temperature_start_delay_ms = 0U;
+                temperature_failure_reported = false;
                 return;
             }
 
             /* Start the next sensor directly; no extra state is needed. */
+            temperature_transfer_callback_start = temperature_tim_callback_count;
             error = ds18b20_req_read(&ds18, temperature_sensor_index);
             if (error != OW_ERR_NONE)
             {
@@ -183,6 +195,7 @@ void TemperatureSensor_Task(void)
     }
 
     /* Any path reaching here failed: show invalid data and retry after a pause. */
+    TemperatureSensor_PrintBusDebug("runtime-error");
     for (uint8_t i = 0U; i < temperature_sensor_count; i++)
     {
         temp_c[i] = DS18B20_ERROR;
@@ -205,6 +218,9 @@ void TemperatureSensor_Init(void)
     uint32_t operation_started_ms;
 
     temperature_sensor_count = 0U;
+    temperature_tim_callback_count = 0U;
+    temperature_transfer_callback_start = 0U;
+    temperature_failure_reported = false;
 
     ow_init_struct.tim_handle = &htim3;
     ow_init_struct.gpio = DQ__Temp_GPIO_Port;
@@ -309,5 +325,48 @@ int16_t TemperatureSensor_GetCentiC(uint8_t sensor_index)
 static void ds18_tim_cb(TIM_HandleTypeDef *htim)
 {
     (void)htim;
+    temperature_tim_callback_count++;
     ow_callback(&ds18.ow);
+}
+
+static void TemperatureSensor_PrintBusDebug(const char *phase)
+{
+    char line[240];
+    int length;
+
+    if (temperature_failure_reported)
+    {
+        return;
+    }
+    temperature_failure_reported = true;
+
+    length = snprintf(line,
+                      sizeof(line),
+                      "TEMPDBG phase=%s n=%u/%u ts=%u err=%u ow=%u ph=%u b=%u.%u cb=%lu tim=%lX/%lX/%lX/%lu/%lu hs=%u irq=%lu/%lu pin=%u\r\n",
+                      phase,
+                      (unsigned int)temperature_sensor_index,
+                      (unsigned int)temperature_sensor_count,
+                      (unsigned int)temperature_state,
+                      (unsigned int)ds18b20_last_error(&ds18),
+                      (unsigned int)ds18.ow.state,
+                      (unsigned int)ds18.ow.buf.bit_ph,
+                      (unsigned int)ds18.ow.buf.byte_idx,
+                      (unsigned int)ds18.ow.buf.bit_idx,
+                      (unsigned long)(temperature_tim_callback_count -
+                                      temperature_transfer_callback_start),
+                      (unsigned long)TIM3->CR1,
+                      (unsigned long)TIM3->DIER,
+                      (unsigned long)TIM3->SR,
+                      (unsigned long)TIM3->CNT,
+                      (unsigned long)TIM3->ARR,
+                      (unsigned int)htim3.State,
+                      (unsigned long)NVIC_GetEnableIRQ(TIM3_IRQn),
+                      (unsigned long)NVIC_GetPendingIRQ(TIM3_IRQn),
+                      (unsigned int)HAL_GPIO_ReadPin(DQ__Temp_GPIO_Port,
+                                                    DQ__Temp_Pin));
+
+    if ((length > 0) && ((size_t)length < sizeof(line)))
+    {
+        SerialConsole_Send(line);
+    }
 }

@@ -358,7 +358,7 @@ void controllerInit(void)
     return;
   }
 
-  /* Arm both independent DMA streams before TIM1 starts their shared CC3 trigger.
+  /* Arm both independent DMA streams before TIM1 starts their shared TRGO trigger.
    * The helper waits for complete buffers and publishes the first measurement. */
   acquisition_fault = Measurements_StartSynchronized();
   if (acquisition_fault != FAULT_NONE)

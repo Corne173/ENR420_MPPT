@@ -29,8 +29,9 @@
 /** Private Function prototype **/
 /*************************************************************************************************/
 
-/* Start OneWire communication */
-ow_err_t  ow_start(ow_t *handle);
+/* Prepare and then run OneWire communication. */
+static ow_err_t ow_prepare(ow_t *handle);
+static ow_err_t ow_run(ow_t *handle);
 
 /* Stop OneWire communication */
 static void ow_stop(ow_t *handle);
@@ -216,8 +217,8 @@ ow_err_t ow_update_rom_id(ow_t *handle)
 
   do
   {
-    /* Start 1-Wire communication */
-    handle->error = ow_start(handle);
+    /* Prepare the timer without starting it. */
+    handle->error = ow_prepare(handle);
     if (handle->error != OW_ERR_NONE)
     {
         /* Stop bus if start failed */
@@ -232,6 +233,8 @@ ow_err_t ow_update_rom_id(ow_t *handle)
     handle->buf.data[0]   = OW_CMD_READ_ROM;
     handle->buf.write_len = 1;
     handle->buf.read_len  = 8;
+
+    handle->error = ow_run(handle);
 
   } while (0);
 
@@ -252,8 +255,8 @@ ow_err_t ow_update_rom_id(ow_t *handle)
 
   do
   {
-    /* Start 1-Wire communication */
-    handle->error = ow_start(handle);
+    /* Prepare the timer without starting it. */
+    handle->error = ow_prepare(handle);
     if (handle->error != OW_ERR_NONE)
     {
       /* Stop bus if start failed */
@@ -269,6 +272,8 @@ ow_err_t ow_update_rom_id(ow_t *handle)
     /* Clear previous search and ROM ID data */
     memset(&handle->search, 0, sizeof(ow_search_t));
     memset(handle->rom_id, 0, sizeof(handle->rom_id));
+
+    handle->error = ow_run(handle);
 
   } while (0);
 
@@ -308,8 +313,8 @@ ow_err_t ow_xfer(ow_t *handle, uint8_t fn_cmd, const uint8_t *w_data, uint16_t w
       break;
     }
 
-    /* Start 1-Wire communication */
-    handle->error = ow_start(handle);
+    /* Prepare the timer without starting it. */
+    handle->error = ow_prepare(handle);
     if (handle->error != OW_ERR_NONE)
     {
       ow_stop(handle);
@@ -341,6 +346,9 @@ ow_err_t ow_xfer(ow_t *handle, uint8_t fn_cmd, const uint8_t *w_data, uint16_t w
 
     /* Set expected read length */
     handle->buf.read_len  = r_len;
+
+    /* Publish the complete transfer state before TIM3 can interrupt. */
+    handle->error = ow_run(handle);
 
   } while (0);
 
@@ -389,8 +397,8 @@ ow_err_t ow_xfer_by_id(ow_t *handle, uint8_t rom_id, uint8_t fn_cmd, const uint8
       break;
     }
 
-    /* Start 1-Wire communication */
-    handle->error = ow_start(handle);
+    /* Prepare the timer without starting it. */
+    handle->error = ow_prepare(handle);
     if (handle->error != OW_ERR_NONE)
     {
       ow_stop(handle);
@@ -426,6 +434,9 @@ ow_err_t ow_xfer_by_id(ow_t *handle, uint8_t rom_id, uint8_t fn_cmd, const uint8
     
     /* Set expected read length */
     handle->buf.read_len  = r_len;
+
+    /* Publish the complete transfer state before TIM3 can interrupt. */
+    handle->error = ow_run(handle);
 
   } while (0);
 
@@ -495,11 +506,11 @@ uint16_t ow_read_resp(ow_t *handle, uint8_t *data, uint16_t data_size)
 
 /*************************************************************************************************/
 /**
- * @brief Start a 1-Wire transfer on the bus.
+ * @brief Prepare a 1-Wire transfer on the bus without enabling TIM3 yet.
  * @param[in] handle: Pointer to the 1-Wire handle.
  * @retval OW_ERR_NONE on success, or error code (OW_ERR_BUSY, OW_ERR_BUS).
  */
-ow_err_t ow_start(ow_t *handle)
+static ow_err_t ow_prepare(ow_t *handle)
 {
   ow_err_t ow_err = OW_ERR_NONE;
   assert_param(handle != NULL);
@@ -525,18 +536,33 @@ ow_err_t ow_start(ow_t *handle)
     __HAL_TIM_CLEAR_IT(handle->config.tim_handle, 0xFFFFFFFFUL);
     memset(&handle->buf, 0, sizeof(ow_buf_t));
 
-    /* Configure timer for reset detection */
+    /* Configure timer for reset detection. The caller must finish publishing
+     * its state and buffer before ow_run() enables the interrupt. */
     __HAL_TIM_SET_COUNTER(handle->config.tim_handle, 0);
     __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_RST_DET - 1);
-    if (HAL_TIM_Base_Start_IT(handle->config.tim_handle) != HAL_OK)
-    {
-      ow_err = OW_ERR_BUS;
-      break;
-    }
 
   } while (0);
 
   return ow_err;
+}
+
+/*************************************************************************************************/
+/**
+ * @brief Start TIM3 only after the complete transfer state is visible.
+ * @param[in,out] handle Pointer to the 1-Wire handle.
+ * @retval OW_ERR_NONE on success, otherwise OW_ERR_BUS.
+ */
+static ow_err_t ow_run(ow_t *handle)
+{
+  assert_param(handle != NULL);
+
+  if (HAL_TIM_Base_Start_IT(handle->config.tim_handle) != HAL_OK)
+  {
+    handle->error = OW_ERR_BUS;
+    ow_stop(handle);
+  }
+
+  return handle->error;
 }
 
 /*************************************************************************************************/

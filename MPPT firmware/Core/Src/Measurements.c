@@ -7,9 +7,11 @@
 #include "Measurements.h"
 
 #include "adc.h"
+#include "SerialConsole.h"
 #include "tim.h"
 
 #include <stddef.h>
+#include <stdio.h>
 
 /* ADC conversion and basic plausibility limits. */
 #define ADC_REFERENCE_VOLTAGE          (3.3f)
@@ -24,6 +26,7 @@
 #define ADC_DMA_BUFFER_LENGTH          (ADC_DMA_FRAME_COUNT * ADC_DMA_WORDS_PER_FRAME)
 #define ADC_AVERAGE_WORD_COUNT         (ADC_AVERAGE_SAMPLE_COUNT * ADC_DMA_WORDS_PER_FRAME)
 #define ADC_FIRST_BUFFER_TIMEOUT_MS    (5U)
+#define ADC_START_ATTEMPT_COUNT        (2U)
 #define ADC_STALE_TIMEOUT_MS           (3U)
 
 /* Rank order in both DMA rings. Input voltage and input current are rank 2, so
@@ -44,6 +47,11 @@ static float Measurements_OutputVoltageFromAdc(float adc_voltage);
 static float Measurements_InputCurrentFromAdc(float adc_voltage);
 static float Measurements_OutputCurrentFromAdc(float adc_voltage);
 static float Adc_RawToVolts(uint16_t raw_count);
+static Fault_t Measurements_StartSynchronizedAttempt(uint32_t attempt_number);
+static void Measurements_PrintStartupDiagnostics(uint32_t attempt_number,
+                                                 uint32_t adc1_words_received,
+                                                 uint32_t adc2_words_received,
+                                                 bool include_registers);
 static bool Measurements_DmaIsArmed(ADC_HandleTypeDef *hadc,
                                     DMA_HandleTypeDef *hdma);
 static bool Measurements_DmaCycleComplete(DMA_HandleTypeDef *hdma);
@@ -72,16 +80,50 @@ static uint32_t adc1_last_progress_ms = 0U;
 static uint32_t adc2_last_progress_ms = 0U;
 
 /**
-  * @brief  Arms both independent ADC DMA rings, then starts their shared TIM1_CC3 trigger.
+  * @brief  Arms both ADC DMA rings, then starts their channel-3-derived TIM1 TRGO.
   * @retval FAULT_NONE on success, otherwise the exact startup stage that failed.
   */
 Fault_t Measurements_StartSynchronized(void)
 {
+  Fault_t fault = FAULT_ADC_BOTH_FIRST_BUFFER;
+
+  for (uint32_t attempt = 0U; attempt < ADC_START_ATTEMPT_COUNT; attempt++)
+  {
+    fault = Measurements_StartSynchronizedAttempt(attempt + 1U);
+    if (fault == FAULT_NONE)
+    {
+      return FAULT_NONE;
+    }
+
+    /* A missing first buffer can be caused by a stale post-flash ADC/timer
+     * handshake. The failed attempt has already stopped both ADCs and TIM1 TRGO,
+     * so one complete re-arm is safe. Configuration/start failures are returned
+     * immediately because repeating them cannot repair an invalid setup. */
+    if ((fault != FAULT_ADC1_FIRST_BUFFER) &&
+        (fault != FAULT_ADC2_FIRST_BUFFER) &&
+        (fault != FAULT_ADC_BOTH_FIRST_BUFFER))
+    {
+      return fault;
+    }
+  }
+
+  return fault;
+}
+
+/**
+  * @brief  Performs one complete ADC DMA and TIM1 TRGO acquisition start attempt.
+  */
+static Fault_t Measurements_StartSynchronizedAttempt(uint32_t attempt_number)
+{
   const uint32_t adc1_tc_flag = __HAL_DMA_GET_TC_FLAG_INDEX(&hdma_adc1);
   const uint32_t adc2_tc_flag = __HAL_DMA_GET_TC_FLAG_INDEX(&hdma_adc2);
+  uint32_t adc1_words_received = 0U;
+  uint32_t adc2_words_received = 0U;
   uint32_t start_ms;
-  bool adc1_full;
-  bool adc2_full;
+  uint16_t adc1_previous_remaining;
+  uint16_t adc2_previous_remaining;
+  bool adc1_ready = false;
+  bool adc2_ready = false;
 
   acquisition_active = false;
   acquisition_fault = FAULT_NONE;
@@ -145,36 +187,64 @@ Fault_t Measurements_StartSynchronized(void)
     return acquisition_fault;
   }
 
-  /* A complete 32-frame ring takes only 128 us. Polling the hardware TC flags
-   * avoids making successful startup depend on callback/IRQ dispatch. */
+  /* Only 16 complete frames are needed for the first published average. Track
+   * DMA counter progress as the primary evidence instead of depending solely on
+   * transfer-complete flags, which can be consumed or stale around a debugger
+   * reset. The TC flags remain a valid shortcut when a complete ring arrives. */
+  adc1_previous_remaining = (uint16_t)__HAL_DMA_GET_COUNTER(&hdma_adc1);
+  adc2_previous_remaining = (uint16_t)__HAL_DMA_GET_COUNTER(&hdma_adc2);
   start_ms = HAL_GetTick();
   do
   {
+    uint16_t adc1_remaining;
+    uint16_t adc2_remaining;
+
     if (acquisition_fault != FAULT_NONE)
     {
       Measurements_StopAcquisition();
       return acquisition_fault;
     }
 
-    adc1_full = ((DMA1->ISR & adc1_tc_flag) != 0U);
-    adc2_full = ((DMA1->ISR & adc2_tc_flag) != 0U);
-    if (adc1_full && adc2_full)
+    adc1_remaining = (uint16_t)__HAL_DMA_GET_COUNTER(&hdma_adc1);
+    adc2_remaining = (uint16_t)__HAL_DMA_GET_COUNTER(&hdma_adc2);
+
+    adc1_words_received +=
+        (adc1_previous_remaining + ADC_DMA_BUFFER_LENGTH - adc1_remaining) %
+        ADC_DMA_BUFFER_LENGTH;
+    adc2_words_received +=
+        (adc2_previous_remaining + ADC_DMA_BUFFER_LENGTH - adc2_remaining) %
+        ADC_DMA_BUFFER_LENGTH;
+    adc1_previous_remaining = adc1_remaining;
+    adc2_previous_remaining = adc2_remaining;
+
+    adc1_ready =
+        (adc1_words_received >= ADC_AVERAGE_WORD_COUNT) ||
+        ((DMA1->ISR & adc1_tc_flag) != 0U);
+    adc2_ready =
+        (adc2_words_received >= ADC_AVERAGE_WORD_COUNT) ||
+        ((DMA1->ISR & adc2_tc_flag) != 0U);
+    if (adc1_ready && adc2_ready)
     {
       break;
     }
   }
   while ((HAL_GetTick() - start_ms) < ADC_FIRST_BUFFER_TIMEOUT_MS);
 
-  if (!adc1_full || !adc2_full)
+  if (!adc1_ready || !adc2_ready)
   {
-    if (!adc1_full && !adc2_full)
+    Measurements_PrintStartupDiagnostics(attempt_number,
+                                         adc1_words_received,
+                                         adc2_words_received,
+                                         attempt_number >= ADC_START_ATTEMPT_COUNT);
+
+    if (!adc1_ready && !adc2_ready)
     {
       acquisition_fault = FAULT_ADC_BOTH_FIRST_BUFFER;
     }
     else
     {
-      acquisition_fault = !adc1_full ? FAULT_ADC1_FIRST_BUFFER
-                                     : FAULT_ADC2_FIRST_BUFFER;
+      acquisition_fault = !adc1_ready ? FAULT_ADC1_FIRST_BUFFER
+                                      : FAULT_ADC2_FIRST_BUFFER;
     }
     Measurements_StopAcquisition();
     return acquisition_fault;
@@ -200,6 +270,69 @@ Fault_t Measurements_StartSynchronized(void)
   }
 
   return acquisition_fault;
+}
+
+/**
+  * @brief  Prints targeted state only when the first ADC samples do not arrive.
+  */
+static void Measurements_PrintStartupDiagnostics(uint32_t attempt_number,
+                                                 uint32_t adc1_words_received,
+                                                 uint32_t adc2_words_received,
+                                                 bool include_registers)
+{
+  char line[220];
+  int length;
+
+  length = snprintf(line,
+                    sizeof(line),
+                    "ADCDBG attempt=%lu words=%lu/%lu remaining=%lu/%lu%s\r\n",
+                    (unsigned long)attempt_number,
+                    (unsigned long)adc1_words_received,
+                    (unsigned long)adc2_words_received,
+                    (unsigned long)__HAL_DMA_GET_COUNTER(&hdma_adc1),
+                    (unsigned long)__HAL_DMA_GET_COUNTER(&hdma_adc2),
+                    include_registers ? " final" : " retry");
+  if ((length > 0) && ((size_t)length < sizeof(line)))
+  {
+    SerialConsole_Send(line);
+  }
+
+  if (!include_registers)
+  {
+    return;
+  }
+
+  length = snprintf(line,
+                    sizeof(line),
+                    "ADCDBG TIM cr1=%08lX cr2=%08lX ccmr2=%08lX ccer=%08lX cnt=%lu ccr3=%lu sr=%08lX\r\n",
+                    (unsigned long)htim1.Instance->CR1,
+                    (unsigned long)htim1.Instance->CR2,
+                    (unsigned long)htim1.Instance->CCMR2,
+                    (unsigned long)htim1.Instance->CCER,
+                    (unsigned long)htim1.Instance->CNT,
+                    (unsigned long)htim1.Instance->CCR3,
+                    (unsigned long)htim1.Instance->SR);
+  if ((length > 0) && ((size_t)length < sizeof(line)))
+  {
+    SerialConsole_Send(line);
+  }
+
+  length = snprintf(line,
+                    sizeof(line),
+                    "ADCDBG ADC cr=%08lX/%08lX cfgr=%08lX/%08lX isr=%08lX/%08lX DMA ccr=%08lX/%08lX isr=%08lX\r\n",
+                    (unsigned long)hadc1.Instance->CR,
+                    (unsigned long)hadc2.Instance->CR,
+                    (unsigned long)hadc1.Instance->CFGR,
+                    (unsigned long)hadc2.Instance->CFGR,
+                    (unsigned long)hadc1.Instance->ISR,
+                    (unsigned long)hadc2.Instance->ISR,
+                    (unsigned long)hdma_adc1.Instance->CCR,
+                    (unsigned long)hdma_adc2.Instance->CCR,
+                    (unsigned long)DMA1->ISR);
+  if ((length > 0) && ((size_t)length < sizeof(line)))
+  {
+    SerialConsole_Send(line);
+  }
 }
 
 /**
@@ -474,7 +607,6 @@ static bool Measurements_CopyLatestSamples(uint16_t *adc1_snapshot,
 {
   for (uint32_t attempt = 0U; attempt < 4U; attempt++)
   {
-    uint32_t primask;
     uint32_t adc1_write_before;
     uint32_t adc2_write_before;
     uint32_t adc1_boundary;
@@ -487,9 +619,6 @@ static bool Measurements_CopyLatestSamples(uint16_t *adc1_snapshot,
     uint32_t adc2_advance;
     uint32_t adc1_index;
     uint32_t adc2_index;
-
-    primask = __get_PRIMASK();
-    __disable_irq();
 
     adc1_write_before =
         (ADC_DMA_BUFFER_LENGTH - __HAL_DMA_GET_COUNTER(&hdma_adc1)) %
@@ -508,10 +637,6 @@ static bool Measurements_CopyLatestSamples(uint16_t *adc1_snapshot,
      * PWM event. */
     if (adc1_boundary != adc2_boundary)
     {
-      if (primask == 0U)
-      {
-        __enable_irq();
-      }
       continue;
     }
 
@@ -550,11 +675,6 @@ static bool Measurements_CopyLatestSamples(uint16_t *adc1_snapshot,
                    ADC_DMA_BUFFER_LENGTH;
     adc2_advance = (adc2_write_after + ADC_DMA_BUFFER_LENGTH - adc2_write_before) %
                    ADC_DMA_BUFFER_LENGTH;
-
-    if (primask == 0U)
-    {
-      __enable_irq();
-    }
 
     /* The unused half-ring gives 32 DMA writes of protection. */
     if ((adc1_advance < ADC_AVERAGE_WORD_COUNT) &&
