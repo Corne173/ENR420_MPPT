@@ -51,7 +51,8 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOB, RE___RS485_Pin|BST_STP_Pin|BCK_STP_Pin|BCK_DIS_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(DQ__Temp_GPIO_Port, DQ__Temp_Pin, GPIO_PIN_RESET);
+  /* Release the open-drain 1-Wire bus; the external pull-up holds it high. */
+  HAL_GPIO_WritePin(DQ__Temp_GPIO_Port, DQ__Temp_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pins : DE___RS485_Pin PF1 */
   GPIO_InitStruct.Pin = DE___RS485_Pin|GPIO_PIN_1;
