@@ -10,15 +10,18 @@ format as well.
 
 from __future__ import annotations
 
+import csv
 import queue
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque
+from datetime import datetime
+from pathlib import Path
+from typing import Deque, TextIO
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 try:
     import serial
@@ -39,6 +42,19 @@ INPUT_CURRENT_SENSOR_V_PER_A = 0.100
 OUTPUT_CURRENT_SENSOR_V_PER_A = 0.0333
 I_IN_OFFSET_COUNTS = 804
 I_OUT_OFFSET_COUNTS = 2030
+CSV_HEADER = (
+    'unix_ms',
+    'i_in_raw',
+    'i_out_raw',
+    'v_out_raw',
+    'v_in_raw',
+    'valid',
+    'temp0_c',
+    'temp1_c',
+    'irr_w_m2',
+    'state',
+    'fault',
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +76,65 @@ class TelemetryPacket:
     irr_w_m2: float | None
     state: str
     fault: str
+
+
+class TelemetryCsvRecorder:
+    def __init__(self) -> None:
+        self._file: TextIO | None = None
+        self._writer = None
+        self.path: Path | None = None
+        self.row_count = 0
+
+    @property
+    def is_recording(self) -> bool:
+        return self._file is not None
+
+    def start(self, path: Path) -> None:
+        if self.is_recording:
+            raise RuntimeError('Telemetry recording is already active')
+
+        csv_path = Path(path)
+        csv_file = csv_path.open('w', encoding='utf-8', newline='')
+        try:
+            writer = csv.writer(csv_file)
+            writer.writerow(CSV_HEADER)
+            csv_file.flush()
+        except Exception:
+            csv_file.close()
+            raise
+        self._file = csv_file
+        self._writer = writer
+        self.path = csv_path
+        self.row_count = 0
+
+    def write(self, packet: TelemetryPacket) -> None:
+        if self._file is None or self._writer is None:
+            return
+
+        self._writer.writerow(
+            (
+                packet.unix_ms,
+                packet.i_in_raw,
+                packet.i_out_raw,
+                packet.v_out_raw,
+                packet.v_in_raw,
+                1 if packet.valid else 0,
+                packet.temp0_c,
+                packet.temp1_c,
+                packet.irr_w_m2,
+                packet.state,
+                packet.fault,
+            )
+        )
+        self._file.flush()
+        self.row_count += 1
+
+    def stop(self) -> None:
+        csv_file = self._file
+        self._file = None
+        self._writer = None
+        if csv_file is not None:
+            csv_file.close()
 
 
 def parse_optional_float(value: str) -> float | None:
@@ -163,6 +238,7 @@ class MpptSerialGui(tk.Tk):
 
         self.reader: SerialReader | None = None
         self.serial_queue: queue.Queue[str | SerialLine] = queue.Queue()
+        self.recorder = TelemetryCsvRecorder()
         self.terminal_line_count = 0
 
         self.current_buffers: dict[str, Deque[float | None]] = {
@@ -271,6 +347,14 @@ class MpptSerialGui(tk.Tk):
             padx=4,
         )
 
+        self.record_button = ttk.Button(
+            controls,
+            text='Start Recording',
+            command=self.toggle_recording,
+            state=tk.DISABLED,
+        )
+        self.record_button.pack(side=tk.LEFT, padx=(14, 4))
+
         main = ttk.Frame(self)
         main.pack(fill=tk.BOTH, expand=True, padx=14, pady=8)
         main.columnconfigure(0, weight=5)
@@ -287,14 +371,14 @@ class MpptSerialGui(tk.Tk):
         for column in range(11):
             summary.columnconfigure(column, weight=1)
 
-        self._add_value(summary, "I in A", self.measurement_values["i_in_a"], 0)
-        self._add_value(summary, "I out A", self.measurement_values["i_out_a"], 1)
-        self._add_value(summary, "V out V", self.measurement_values["v_out_v"], 2)
-        self._add_value(summary, "V in V", self.measurement_values["v_in_v"], 3)
+        self._add_value(summary, "I in A", self.measurement_values["i_in_a"], 0, numeric=True)
+        self._add_value(summary, "I out A", self.measurement_values["i_out_a"], 1, numeric=True)
+        self._add_value(summary, "V out V", self.measurement_values["v_out_v"], 2, numeric=True)
+        self._add_value(summary, "V in V", self.measurement_values["v_in_v"], 3, numeric=True)
         self._add_value(summary, "Valid", self.valid_value, 4)
-        self._add_value(summary, "Temp0 C", self.sensor_values["temp0_c"], 5)
-        self._add_value(summary, "Temp1 C", self.sensor_values["temp1_c"], 6)
-        self._add_value(summary, "Irr W/m2", self.sensor_values["irr_w_m2"], 7)
+        self._add_value(summary, "Temp0 C", self.sensor_values["temp0_c"], 5, numeric=True)
+        self._add_value(summary, "Temp1 C", self.sensor_values["temp1_c"], 6, numeric=True)
+        self._add_value(summary, "Irr W/m2", self.sensor_values["irr_w_m2"], 7, numeric=True)
         self._add_value(summary, "State", self.state_value, 8)
         self._add_value(summary, "Fault", self.fault_value, 9)
 
@@ -369,6 +453,8 @@ class MpptSerialGui(tk.Tk):
         label: str,
         variable: tk.StringVar,
         column: int,
+        *,
+        numeric: bool = False,
     ) -> None:
         frame = ttk.Frame(parent)
         frame.grid(row=0, column=column, sticky="ew", padx=3)
@@ -378,7 +464,7 @@ class MpptSerialGui(tk.Tk):
             textvariable=variable,
             style="Value.TLabel",
             anchor="center",
-            font=("Segoe UI", 11, "bold"),
+            font=(("Consolas", 11, "bold") if numeric else ("Segoe UI", 11, "bold")),
             padding=(8, 6),
         ).pack(fill=tk.X)
 
@@ -424,11 +510,73 @@ class MpptSerialGui(tk.Tk):
         self.connection_status.set(f"Connecting to {port}...")
 
     def disconnect(self) -> None:
+        self.stop_recording()
         if self.reader is not None:
             self.reader.stop()
             self.reader = None
+        self.record_button.configure(state=tk.DISABLED)
         self.connect_button.configure(text="Connect")
         self.connection_status.set("Disconnected")
+
+    def toggle_recording(self) -> None:
+        if self.recorder.is_recording:
+            self.stop_recording()
+        else:
+            self.start_recording()
+
+    def start_recording(self) -> None:
+        serial_port = self.reader.serial_port if self.reader is not None else None
+        if serial_port is None or not serial_port.is_open:
+            messagebox.showwarning('Not connected', 'Connect to a serial port first.')
+            return
+
+        filename = filedialog.asksaveasfilename(
+            title='Record telemetry to CSV',
+            defaultextension='.csv',
+            filetypes=(('CSV files', '*.csv'), ('All files', '*.*')),
+            initialfile=f'mppt_telemetry_{datetime.now():%Y%m%d_%H%M%S}.csv',
+        )
+        if not filename:
+            return
+
+        try:
+            self.recorder.start(Path(filename))
+        except (OSError, csv.Error) as exc:
+            self._append_terminal(f'[ERROR] Could not start recording: {exc}')
+            messagebox.showerror('Recording error', f'Could not start recording:\n{exc}')
+            return
+
+        self.record_button.configure(text='Stop Recording')
+        self._append_terminal(f'[GUI] Recording telemetry to {self.recorder.path}')
+
+    def stop_recording(self) -> None:
+        if not self.recorder.is_recording:
+            return
+
+        path = self.recorder.path
+        row_count = self.recorder.row_count
+        try:
+            self.recorder.stop()
+        except OSError as exc:
+            self._append_terminal(f'[ERROR] Could not close recording {path}: {exc}')
+            messagebox.showerror('Recording error', f'Could not close the CSV file:\n{exc}')
+        else:
+            self._append_terminal(
+                f'[GUI] Recording stopped: {row_count} telemetry rows saved to {path}'
+            )
+        finally:
+            self.record_button.configure(text='Start Recording')
+
+    def _handle_recording_error(self, error: Exception) -> None:
+        path = self.recorder.path
+        try:
+            self.recorder.stop()
+        except OSError as close_error:
+            error = OSError(f'{error}; additionally could not close the file: {close_error}')
+
+        self.record_button.configure(text='Start Recording')
+        self._append_terminal(f'[ERROR] Recording stopped for {path}: {error}')
+        messagebox.showerror('Recording error', f'Recording stopped because writing failed:\n{error}')
 
     def send_command(self, command: bytes) -> None:
         if self.reader is None:
@@ -456,6 +604,11 @@ class MpptSerialGui(tk.Tk):
                     item.received_unix_ms,
                 )
                 if packet is not None:
+                    if self.recorder.is_recording:
+                        try:
+                            self.recorder.write(packet)
+                        except (OSError, csv.Error) as exc:
+                            self._handle_recording_error(exc)
                     self._append_terminal(
                         self._format_telemetry_line(
                             item.text,
@@ -490,6 +643,12 @@ class MpptSerialGui(tk.Tk):
                 continue
 
             self._append_terminal(line)
+
+        serial_port = self.reader.serial_port if self.reader is not None else None
+        connected = serial_port is not None and serial_port.is_open
+        if self.recorder.is_recording and not connected:
+            self.stop_recording()
+        self.record_button.configure(state=tk.NORMAL if connected else tk.DISABLED)
 
         self.after(50, self._process_serial_queue)
 
@@ -560,13 +719,16 @@ class MpptSerialGui(tk.Tk):
         self.temperature_buffers["temp1_c"].append(packet.temp1_c)
         self.irradiance_buffers["irr_w_m2"].append(packet.irr_w_m2)
 
-        self.measurement_values["i_in_a"].set(f"{i_in_a:.2f}")
-        self.measurement_values["i_out_a"].set(f"{i_out_a:.2f}")
-        self.measurement_values["v_out_v"].set(f"{v_out_v:.2f}")
-        self.measurement_values["v_in_v"].set(f"{v_in_v:.2f}")
-        self.sensor_values["temp0_c"].set(format_optional(packet.temp0_c, "{:.2f}"))
-        self.sensor_values["temp1_c"].set(format_optional(packet.temp1_c, "{:.2f}"))
-        self.sensor_values["irr_w_m2"].set(format_optional(packet.irr_w_m2, "{:.0f}"))
+        # A leading blank reserves the sign column for positive values. Combined
+        # with the fixed-width font above, crossing zero no longer moves digits
+        # or changes the requested width of a summary cell.
+        self.measurement_values["i_in_a"].set(f"{i_in_a: .2f}")
+        self.measurement_values["i_out_a"].set(f"{i_out_a: .2f}")
+        self.measurement_values["v_out_v"].set(f"{v_out_v: .2f}")
+        self.measurement_values["v_in_v"].set(f"{v_in_v: .2f}")
+        self.sensor_values["temp0_c"].set(format_optional(packet.temp0_c, "{: .2f}"))
+        self.sensor_values["temp1_c"].set(format_optional(packet.temp1_c, "{: .2f}"))
+        self.sensor_values["irr_w_m2"].set(format_optional(packet.irr_w_m2, "{: .0f}"))
         self.state_value.set(packet.state)
         self.fault_value.set(packet.fault)
         self.valid_value.set("yes" if packet.valid else "no")
