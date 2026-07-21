@@ -1,7 +1,8 @@
 """Minimal serial GUI for the ENR MPPT controller.
 
 Expected firmware telemetry packet:
-i_in_raw,i_out_raw,v_out_raw,v_in_raw,valid,temp0_c,temp1_c,irr_w_m2,state,fault
+i_in_raw,i_out_raw,v_out_raw,v_in_raw,valid,temp0_c,temp1_c,irr_w_m2,state,fault,
+mppt_phase,mppt_gain,mppt_step,buck_duty,boost_duty,reference_power_w,sampled_power_w
 
 The PC prepends ``unix_ms`` when it receives a telemetry packet. Legacy
 ``ADC,ms,seq,...`` firmware packets are accepted and displayed in the new
@@ -54,6 +55,13 @@ CSV_HEADER = (
     'irr_w_m2',
     'state',
     'fault',
+    'mppt_phase',
+    'mppt_gain',
+    'mppt_step',
+    'buck_duty',
+    'boost_duty',
+    'reference_power_w',
+    'sampled_power_w',
 )
 
 
@@ -76,6 +84,13 @@ class TelemetryPacket:
     irr_w_m2: float | None
     state: str
     fault: str
+    mppt_phase: str | None = None
+    mppt_gain: float | None = None
+    mppt_step: float | None = None
+    buck_duty: float | None = None
+    boost_duty: float | None = None
+    reference_power_w: float | None = None
+    sampled_power_w: float | None = None
 
 
 class TelemetryCsvRecorder:
@@ -124,6 +139,13 @@ class TelemetryCsvRecorder:
                 packet.irr_w_m2,
                 packet.state,
                 packet.fault,
+                packet.mppt_phase,
+                packet.mppt_gain,
+                packet.mppt_step,
+                packet.buck_duty,
+                packet.boost_duty,
+                packet.reference_power_w,
+                packet.sampled_power_w,
             )
         )
         self._file.flush()
@@ -676,6 +698,17 @@ class MpptSerialGui(tk.Tk):
                     irr_w_m2=parse_optional_float(parts[7]),
                     state=parts[8],
                     fault=parts[9],
+                    mppt_phase=(parts[10].strip() or None) if len(parts) > 10 else None,
+                    mppt_gain=parse_optional_float(parts[11]) if len(parts) > 11 else None,
+                    mppt_step=parse_optional_float(parts[12]) if len(parts) > 12 else None,
+                    buck_duty=parse_optional_float(parts[13]) if len(parts) > 13 else None,
+                    boost_duty=parse_optional_float(parts[14]) if len(parts) > 14 else None,
+                    reference_power_w=(
+                        parse_optional_float(parts[15]) if len(parts) > 15 else None
+                    ),
+                    sampled_power_w=(
+                        parse_optional_float(parts[16]) if len(parts) > 16 else None
+                    ),
                 )
 
             # Compatibility with the older packet that had no sensor fields.

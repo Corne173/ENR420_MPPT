@@ -53,7 +53,7 @@
  * UART printing does not dominate the control loop.
  */
 #define FAST_TASK_PERIOD_MS        (1U)
-#define MPPT_TASK_PERIOD_MS        (50U)
+#define MPPT_TASK_PERIOD_MS        (1U)
 #define TELEMETRY_TASK_PERIOD_MS   (50U)  /* 20 telemetry packets per second */
 #define STARTUP_SETTLE_TIME_MS     (500U)
 
