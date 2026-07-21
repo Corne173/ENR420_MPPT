@@ -14,28 +14,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/*
- * Irradiance sensor Modbus transaction configuration.
- *
- * One Modbus RTU poll works as follows:
- *   1. The task waits for IRRADIANCE_TASK_PERIOD_MS so the sensor is not queried
- *      on every pass through the main loop.
- *   2. IrradianceSensor_BuildReadRequest() creates this request frame:
- *        [slave ID][function][start register][register count][CRC low][CRC high]
- *      The start register and register count are sent most-significant byte
- *      first. The CRC is calculated by the firmware and appended automatically.
- *   3. The RS485 transceiver is placed in transmit mode and HAL_UART_Transmit()
- *      sends the request on USART1.
- *   4. The transceiver is returned to receive mode and HAL_UART_Receive() waits
- *      for the sensor response:
- *        [slave ID][function][byte count][data bytes][CRC low][CRC high]
- *   5. IrradianceSensor_ParseReadResponse() checks the echoed slave ID and
- *      function code, confirms the byte count and CRC, then converts the returned
- *      register data to W/m^2.
- *
- * Treat the numeric values below as scaffold values until they have been checked
- * against the guide and the specific sensor's Modbus table.
- */
+/* Treat these values as scaffold values until they have been checked against
+ * the guide and the specific sensor's Modbus table. */
 #define IRRADIANCE_SENSOR_ENABLE                    (1U)
 #define IRRADIANCE_MODBUS_SLAVE_ID                  (0x01U)       /* Check: sensor Modbus address / slave ID. */
 #define IRRADIANCE_MODBUS_FUNCTION_CODE             (0x03U)    /* Check: read function code for this register type. */
@@ -43,8 +23,19 @@
 #define IRRADIANCE_MODBUS_REGISTER_COUNT            (1U)       /* Check: number of 16-bit registers returned. */
 #define IRRADIANCE_MODBUS_REQUEST_LENGTH            (8U)
 #define IRRADIANCE_MODBUS_RESPONSE_MAX_LENGTH       (32U)
-#define IRRADIANCE_MODBUS_TIMEOUT_MS                (100U)     /* Check/test: maximum wait for one reply. */
+#define IRRADIANCE_MODBUS_RESPONSE_LENGTH           (5U + (IRRADIANCE_MODBUS_REGISTER_COUNT * 2U))
+#define IRRADIANCE_TASK_PERIOD_MS                   (200U)      /* Poll at 5 Hz. */
+#define IRRADIANCE_TX_TIMEOUT_MS                    (30U)
+#define IRRADIANCE_RX_TIMEOUT_MS                    (100U)
 #define IRRADIANCE_RAW_TO_W_PER_M2_SCALE            (1.0f)     /* Check: raw register to W/m^2 scale factor. */
+
+typedef enum
+{
+  IRRADIANCE_STATE_WAIT = 0,
+  IRRADIANCE_STATE_TX,
+  IRRADIANCE_STATE_RX,
+  IRRADIANCE_STATE_READY
+} IrradianceSensor_State;
 
 static size_t IrradianceSensor_BuildReadRequest(uint8_t *request, size_t request_size);
 static bool IrradianceSensor_ParseReadResponse(const uint8_t *response,
@@ -53,6 +44,13 @@ static bool IrradianceSensor_ParseReadResponse(const uint8_t *response,
 static void Rs485_SetTransmitMode(void);
 static void Rs485_SetReceiveMode(void);
 
+static uint8_t request[IRRADIANCE_MODBUS_REQUEST_LENGTH];
+static uint8_t response[IRRADIANCE_MODBUS_RESPONSE_MAX_LENGTH];
+static size_t request_length = 0U;
+static volatile IrradianceSensor_State state = IRRADIANCE_STATE_WAIT;
+static volatile uint32_t state_started_ms = 0U;
+static volatile bool uart_error = false;
+static uint32_t last_poll_ms = 0U;
 static float irradiance_w_m2 = 0.0f;
 static bool irradiance_valid = false;
 
@@ -63,102 +61,139 @@ static bool irradiance_valid = false;
 void IrradianceSensor_Init(void)
 {
   Rs485_SetReceiveMode();
+
+  request_length = IrradianceSensor_BuildReadRequest(request, sizeof(request));
+  state = IRRADIANCE_STATE_WAIT;
+  state_started_ms = 0U;
+  uart_error = false;
+  last_poll_ms = HAL_GetTick();
   irradiance_w_m2 = 0.0f;
   irradiance_valid = false;
 }
 
 /**
-  * @brief  Student scaffold for polling an irradiance sensor over USART1/RS485
-  *         using Modbus RTU.
-  *
-  * This task is called from the main loop. It is disabled by default; enable it
-  * only after confirming the constants and USART1/RS485 settings documented in
-  * the irradiance configuration block near the top of this file.
-  *
-  * When enabling it, keep the blocking UART calls short. A production controller
-  * should normally move Modbus receive handling to interrupts, DMA, or a small
-  * non-blocking state machine so that MPPT timing is not disturbed.
+  * @brief  Advances one non-blocking USART1/RS485 Modbus transaction.
   */
 void IrradianceSensor_Task(void)
 {
-  uint8_t request[IRRADIANCE_MODBUS_REQUEST_LENGTH] = {0};
-  uint8_t response[IRRADIANCE_MODBUS_RESPONSE_MAX_LENGTH] = {0};
-  size_t request_length;
-  size_t expected_response_length;
+  uint32_t now_ms;
 
-  /* Keep the scaffold compiled but inactive until the sensor constants and UART
-   * settings have been checked. Set IRRADIANCE_SENSOR_ENABLE to 1 only after that. */
   if (IRRADIANCE_SENSOR_ENABLE == 0U)
   {
     return;
   }
 
-  
-
-  /* A normal Modbus read response contains:
-   *   slave ID, function code, byte count, data bytes, CRC low, CRC high.
-   * Each requested register contributes two data bytes. For example, reading one
-   * 16-bit register gives 5 + 2*1 = 7 response bytes. */
-  expected_response_length =
-      5U + ((size_t)IRRADIANCE_MODBUS_REGISTER_COUNT * 2U);
-
-  if (expected_response_length > sizeof(response))
+  if ((request_length == 0U) ||
+      (IRRADIANCE_MODBUS_RESPONSE_LENGTH > sizeof(response)))
   {
     irradiance_valid = false;
     return;
   }
 
-  /* Build request[] from the constants near the top of this file. This helper
-   * also inserts the correct Modbus byte order and appends the CRC. */
-  request_length = IrradianceSensor_BuildReadRequest(request, sizeof(request));
-  if (request_length == 0U)
-  {
-    irradiance_valid = false;
-    return;
-  }
+  now_ms = HAL_GetTick();
 
-  /* RS485 is half-duplex on this board. Enable transmit mode before driving the bus. */
-  Rs485_SetTransmitMode();
-
-  /* Send the complete Modbus request frame on USART1. request_length is normally
-   * 8 bytes for a standard single-register read request. */
-  if (HAL_UART_Transmit(&huart1,
-                        request,
-                        (uint16_t)request_length,
-                        IRRADIANCE_MODBUS_TIMEOUT_MS) != HAL_OK)
+  /* UART errors and timeouts are recovered in the main loop, not in the ISR. */
+  if (uart_error)
   {
+    uart_error = false;
+    (void)HAL_UART_Abort(&huart1);
     Rs485_SetReceiveMode();
+    state = IRRADIANCE_STATE_WAIT;
+    last_poll_ms = now_ms;
     irradiance_valid = false;
     return;
   }
 
-  /* After the request has been sent, release the bus driver and enable receiving
-   * so the sensor can reply on the same RS485 pair. */
+  switch (state)
+  {
+    case IRRADIANCE_STATE_WAIT:
+      if (Timebase_HasElapsed(now_ms, last_poll_ms, IRRADIANCE_TASK_PERIOD_MS))
+      {
+        last_poll_ms = now_ms;
+        state_started_ms = now_ms;
+        state = IRRADIANCE_STATE_TX;
+        Rs485_SetTransmitMode();
+
+        if (HAL_UART_Transmit_IT(&huart1,
+                                request,
+                                (uint16_t)request_length) != HAL_OK)
+        {
+          uart_error = true;
+        }
+      }
+      break;
+
+    case IRRADIANCE_STATE_TX:
+      if (Timebase_HasElapsed(now_ms, state_started_ms, IRRADIANCE_TX_TIMEOUT_MS))
+      {
+        uart_error = true;
+      }
+      break;
+
+    case IRRADIANCE_STATE_RX:
+      if (Timebase_HasElapsed(now_ms, state_started_ms, IRRADIANCE_RX_TIMEOUT_MS))
+      {
+        uart_error = true;
+      }
+      break;
+
+    case IRRADIANCE_STATE_READY:
+      /* CRC checking and conversion stay out of the interrupt handler. */
+      irradiance_valid = IrradianceSensor_ParseReadResponse(
+          response,
+          IRRADIANCE_MODBUS_RESPONSE_LENGTH,
+          &irradiance_w_m2);
+      state = IRRADIANCE_STATE_WAIT;
+      break;
+
+    default:
+      uart_error = true;
+      break;
+  }
+}
+
+/**
+  * @brief  Releases the RS485 bus after the last stop bit and starts reception.
+  */
+void IrradianceSensor_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if ((huart->Instance != USART1) || (state != IRRADIANCE_STATE_TX))
+  {
+    return;
+  }
+
   Rs485_SetReceiveMode();
+  state_started_ms = HAL_GetTick();
+  state = IRRADIANCE_STATE_RX;
 
-  /* Read the expected number of response bytes into response[]. For a one-register
-   * read this is usually 7 bytes: address, function, byte count, 2 data bytes, CRC. */
-  if (HAL_UART_Receive(&huart1,
-                       response,
-                       (uint16_t)expected_response_length,
-                       IRRADIANCE_MODBUS_TIMEOUT_MS) != HAL_OK)
+  if (HAL_UART_Receive_IT(&huart1,
+                          response,
+                          (uint16_t)IRRADIANCE_MODBUS_RESPONSE_LENGTH) != HAL_OK)
   {
-    irradiance_valid = false;
-    return;
+    uart_error = true;
   }
+}
 
-  /* Validate the reply, check its CRC, and convert the returned data register to
-   * the engineering value irradiance_w_m2. */
-  if (!IrradianceSensor_ParseReadResponse(response,
-                                          expected_response_length,
-                                          &irradiance_w_m2))
+/**
+  * @brief  Marks the fixed-length Modbus reply for main-loop parsing.
+  */
+void IrradianceSensor_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if ((huart->Instance == USART1) && (state == IRRADIANCE_STATE_RX))
   {
-    irradiance_valid = false;
-    return;
+    state = IRRADIANCE_STATE_READY;
   }
+}
 
-  /* Reaching this point means the complete request/response transaction succeeded. */
-  irradiance_valid = true;
+/**
+  * @brief  Defers USART1 error recovery to IrradianceSensor_Task().
+  */
+void IrradianceSensor_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART1)
+  {
+    uart_error = true;
+  }
 }
 
 bool IrradianceSensor_IsValid(void)
