@@ -102,6 +102,16 @@ Run the GUI:
 python mppt_serial_gui.py
 ```
 
+After connecting to the controller, select **Start Recording** to choose a CSV
+file and begin logging telemetry. The button changes to **Stop Recording** while
+logging. Every telemetry packet is written and flushed to disk immediately, so
+the GUI does not keep the complete recording in memory. Recording stops cleanly
+when the button is selected again, the serial connection closes, or the GUI exits.
+
+The CSV contains the PC receive time followed by the raw telemetry fields:
+`unix_ms,i_in_raw,i_out_raw,v_out_raw,v_in_raw,valid,temp0_c,temp1_c,irr_w_m2,state,fault`.
+Status and help messages shown in the terminal are not included.
+
 ## Getting Help
 
 Please use the GitHub **Issues** feature for project problems, bugs, unclear instructions, firmware questions, or documentation gaps. Issues keep questions and solutions visible, so one student's problem can help the next group too.

@@ -44,11 +44,11 @@
 #endif
 
 #define OW_TIM_RST          500
-#define OW_TIM_RST_DET      100
+#define OW_TIM_RST_DET      70  /* Guaranteed DS18B20 presence-pulse overlap */
 #define OW_TIM_WRITE_HIGH   70
 #define OW_TIM_WRITE_LOW    10
-#define OW_TIM_READ_LOW     10
-#define OW_TIM_READ_SAMPLE  10
+#define OW_TIM_READ_LOW     6   /* Sample at about 12 us, inside the 15 us limit */
+#define OW_TIM_READ_SAMPLE  6
 #define OW_TIM_READ_HIGH    60
 
 /* USER CODE END OW_CONFIGURATION */

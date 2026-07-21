@@ -19,6 +19,7 @@ void SerialConsole_Send(const char *text);
 void SerialConsole_SendLine(const char *text);
 
 void SerialConsole_RxCpltCallback(UART_HandleTypeDef *huart);
+void SerialConsole_TxCpltCallback(UART_HandleTypeDef *huart);
 void SerialConsole_ErrorCallback(UART_HandleTypeDef *huart);
 
 #endif /* INC_SERIALCONSOLE_H_ */

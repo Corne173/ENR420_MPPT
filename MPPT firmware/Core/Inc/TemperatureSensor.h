@@ -14,4 +14,4 @@ void TemperatureSensor_Init(void);
 float TemperatureSensor_GetTemp(void);
 int16_t TemperatureSensor_GetCentiC(uint8_t sensor_index);
 
-#endif /* INC_STATUSLED_H_ */
+#endif /* INC_TEMPERATURESENSOR_H_ */

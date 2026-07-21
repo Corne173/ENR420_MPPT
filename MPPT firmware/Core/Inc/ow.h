@@ -48,6 +48,7 @@ typedef enum
   OW_ERR_RESET,                    /* Reset failed */
   OW_ERR_LEN,                      /* Invalid data length */
   OW_ERR_ROM_ID,                   /* ROM ID error */
+  OW_ERR_TIMEOUT,                  /* Transfer exceeded its allowed time */
 
 } ow_err_t;
 
@@ -175,8 +176,8 @@ typedef struct
 {
   ow_config_t               config;                /* Static configuration */
   ow_buf_t                  buf;                   /* Transfer buffer */
-  ow_state_t                state;                 /* Current state */
-  ow_err_t                  error;                 /* Last error */
+  volatile ow_state_t       state;                 /* ISR writes; main loop reads */
+  volatile ow_err_t         error;                 /* ISR writes; main loop reads */
   uint8_t                   rom_id_filter;         /* Filter of ROM ID */
   ow_id_t                   rom_id[OW_MAX_DEVICE]; /* List of ROM IDs */
 #if (OW_MAX_DEVICE > 1)
@@ -204,6 +205,9 @@ bool      ow_is_busy(ow_t *handle);
 
 /* Get last error code */
 ow_err_t  ow_last_error(ow_t *handle);
+
+/* Stop a timed-out transfer, release the bus and restore the idle state */
+void      ow_abort(ow_t *handle);
 
 /* Update device ROM ID(s) on bus */
 ow_err_t  ow_update_rom_id(ow_t *handle);

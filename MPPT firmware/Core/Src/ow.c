@@ -33,7 +33,7 @@
 ow_err_t  ow_start(ow_t *handle);
 
 /* Stop OneWire communication */
-void      ow_stop(ow_t *handle);
+static void ow_stop(ow_t *handle);
 
 /* Handle transfer state machine */
 __STATIC_FORCEINLINE void ow_state_xfer(ow_t *handle);
@@ -188,6 +188,19 @@ ow_err_t ow_last_error(ow_t *handle)
 {
   assert_param(handle != NULL);
   return handle->error;
+}
+
+/*************************************************************************************************/
+/**
+ * @brief Abort a transfer that did not complete, then release the 1-Wire bus.
+ * @param[in,out] handle: Pointer to the 1-Wire handle.
+ */
+void ow_abort(ow_t *handle)
+{
+  assert_param(handle != NULL);
+
+  handle->error = OW_ERR_TIMEOUT;
+  ow_stop(handle);
 }
 
 #if (OW_MAX_DEVICE == 1)
@@ -515,7 +528,11 @@ ow_err_t ow_start(ow_t *handle)
     /* Configure timer for reset detection */
     __HAL_TIM_SET_COUNTER(handle->config.tim_handle, 0);
     __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_RST_DET - 1);
-    HAL_TIM_Base_Start_IT(handle->config.tim_handle);
+    if (HAL_TIM_Base_Start_IT(handle->config.tim_handle) != HAL_OK)
+    {
+      ow_err = OW_ERR_BUS;
+      break;
+    }
 
   } while (0);
 
@@ -527,12 +544,13 @@ ow_err_t ow_start(ow_t *handle)
  * @brief Stop 1-Wire transfer and release the bus.
  * @param[in] handle Pointer to the 1-Wire handle.
  */
-void ow_stop(ow_t *handle)
+static void ow_stop(ow_t *handle)
 {
   assert_param(handle != NULL);
 
   /* Stop timer interrupts */
   HAL_TIM_Base_Stop_IT(handle->config.tim_handle);
+  __HAL_TIM_CLEAR_IT(handle->config.tim_handle, TIM_IT_UPDATE);
 
   /* Release bus (set high) */
   ow_write_bit(handle, true);
@@ -867,6 +885,11 @@ __STATIC_FORCEINLINE void ow_state_search(ow_t *handle)
     else
     {
       __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_WRITE_HIGH - 1);
+      /* Clear bits left by the previous ROM-search pass. The previous path is
+       * retained between passes so discrepancies before last_discrepancy can
+       * be replayed, but the path after that point may be different. */
+      handle->search.rom_id[handle->buf.bit_idx / 8] &=
+        (uint8_t)~(1U << (handle->buf.bit_idx % 8));
     }
     ow_write_bit(handle, false);
     handle->buf.bit_ph++;
@@ -904,8 +927,6 @@ __STATIC_FORCEINLINE void ow_state_search(ow_t *handle)
           handle->rom_id_found++;
         }
       }
-      memset(handle->search.rom_id, 0, 8);
-
       /* update discrepancy */
       handle->search.last_discrepancy = handle->search.last_zero;
       handle->search.last_zero = 0;

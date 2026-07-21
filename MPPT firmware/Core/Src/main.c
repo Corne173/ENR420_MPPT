@@ -54,9 +54,8 @@
  */
 #define FAST_TASK_PERIOD_MS        (1U)
 #define MPPT_TASK_PERIOD_MS        (50U)
-#define TELEMETRY_TASK_PERIOD_MS   (100U)
+#define TELEMETRY_TASK_PERIOD_MS   (50U)  /* 20 telemetry packets per second */
 #define STARTUP_SETTLE_TIME_MS     (500U)
-#define SENSOR_TASK_PERIOD_MS                   (1000U)
 
 
 
@@ -79,7 +78,6 @@ static uint32_t mppt_state_entered_ms;
 static uint32_t fast_task_last_ms;
 static uint32_t mppt_task_last_ms;
 static uint32_t telemetry_task_last_ms;
-static uint32_t sensor_task_last_ms = 0U;
 
 volatile State_t state = STATE_INIT;
 volatile Fault_t mppt_fault = FAULT_NONE;
@@ -170,20 +168,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    /* Handles one-byte user commands received over USART2. */
-    SerialConsole_Task();
     const uint32_t now_ms = HAL_GetTick();
-    /* Student hook for irradiance-sensor polling over USART1/RS485 Modbus. */
-    /* The main loop runs continuously. This guard makes the irradiance ad temperature poll run
-    * only once per IRRADIANCE_TASK_PERIOD_MS instead of on every loop iteration. */
-    if (Timebase_HasElapsed(now_ms, sensor_task_last_ms, SENSOR_TASK_PERIOD_MS))
-    {
-      sensor_task_last_ms = now_ms;
-      IrradianceSensor_Task();
-      TemperatureSensor_Task();
-    }
-    
-    
 
     /* Runs measurement, protection, state transitions, and MPPT updates. */
     #if 1
@@ -196,12 +181,8 @@ int main(void)
       (void)runFastTasks();
     }
 
-    /* Telemetry is intentionally slower than measurement/protection. */
-    if (Timebase_HasElapsed(now_ms, telemetry_task_last_ms, TELEMETRY_TASK_PERIOD_MS))
-    {
-      telemetry_task_last_ms = now_ms;
-      Telemetry_Task();
-    }
+    /* Handle console commands after the safety-critical measurement checks. */
+    SerialConsole_Task();
 
     switch ((State_t)state)
     {
@@ -275,6 +256,17 @@ int main(void)
         break;
     }
     #endif
+
+    /* Sensor tasks only advance their state machines and never wait in the loop. */
+    TemperatureSensor_Task();
+    IrradianceSensor_Task();
+
+    /* Queue telemetry after control and sensor state have been serviced. */
+    if (Timebase_HasElapsed(now_ms, telemetry_task_last_ms, TELEMETRY_TASK_PERIOD_MS))
+    {
+      telemetry_task_last_ms = now_ms;
+      Telemetry_Task();
+    }
 
     /* Test-only status indication on LD3/PB3. See the warning in the function. */
     StatusLed_Task(state);
@@ -468,20 +460,32 @@ bool runFastTasks(void)
 
 
 /**
-  * @brief  UART receive-complete callback dispatches to the USART2 PC console.
-  * @param  huart UART handle that completed reception.
-  */
+ * @brief  UART transmit-complete callback dispatches to the active UART module.
+ * @param  huart UART handle that completed transmission.
+ */
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  IrradianceSensor_TxCpltCallback(huart);
+  SerialConsole_TxCpltCallback(huart);
+}
+
+/**
+ * @brief  UART receive-complete callback dispatches to the active UART module.
+ * @param  huart UART handle that completed reception.
+ */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
+  IrradianceSensor_RxCpltCallback(huart);
   SerialConsole_RxCpltCallback(huart);
 }
 
 /**
-  * @brief  UART error callback dispatches to the USART2 PC console.
-  * @param  huart UART handle that reported an error.
-  */
+ * @brief  UART error callback dispatches to the active UART module.
+ * @param  huart UART handle that reported an error.
+ */
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
+  IrradianceSensor_ErrorCallback(huart);
   SerialConsole_ErrorCallback(huart);
 }
 
