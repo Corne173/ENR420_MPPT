@@ -278,6 +278,10 @@ class MpptSerialGui(tk.Tk):
         self.irradiance_buffers: dict[str, Deque[float | None]] = {
             "irr_w_m2": deque(maxlen=MAX_POINTS),
         }
+        self.power_buffers: dict[str, Deque[float | None]] = {
+            "p_in_w": deque(maxlen=MAX_POINTS),
+            "p_out_w": deque(maxlen=MAX_POINTS),
+        }
 
         self.connection_status = tk.StringVar(value="Disconnected")
         self.packet_status = tk.StringVar(value="No telemetry packets received")
@@ -294,6 +298,10 @@ class MpptSerialGui(tk.Tk):
             "temp0_c": tk.StringVar(value="-"),
             "temp1_c": tk.StringVar(value="-"),
             "irr_w_m2": tk.StringVar(value="-"),
+        }
+        self.power_values = {
+            "p_in_w": tk.StringVar(value="-"),
+            "p_out_w": tk.StringVar(value="-"),
         }
 
         self._configure_style()
@@ -377,8 +385,16 @@ class MpptSerialGui(tk.Tk):
         )
         self.record_button.pack(side=tk.LEFT, padx=(14, 4))
 
-        main = ttk.Frame(self)
-        main.pack(fill=tk.BOTH, expand=True, padx=14, pady=8)
+        pages = ttk.Notebook(self)
+        pages.pack(fill=tk.BOTH, expand=True, padx=14, pady=8)
+
+        measurements_page = ttk.Frame(pages)
+        power_page = ttk.Frame(pages)
+        pages.add(measurements_page, text="Measurements")
+        pages.add(power_page, text="Power")
+
+        main = ttk.Frame(measurements_page)
+        main.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         main.columnconfigure(0, weight=5)
         main.columnconfigure(1, weight=1)
         main.rowconfigure(0, weight=1)
@@ -460,6 +476,42 @@ class MpptSerialGui(tk.Tk):
         scroll = ttk.Scrollbar(terminal_frame, orient=tk.VERTICAL, command=self.terminal.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         self.terminal.configure(yscrollcommand=scroll.set)
+
+        self._build_power_page(power_page)
+
+    def _build_power_page(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
+
+        summary = ttk.Frame(parent)
+        summary.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+        summary.columnconfigure(0, weight=1)
+        summary.columnconfigure(1, weight=1)
+        self._add_value(
+            summary,
+            "Input power (W)",
+            self.power_values["p_in_w"],
+            0,
+            numeric=True,
+        )
+        self._add_value(
+            summary,
+            "Output power (W)",
+            self.power_values["p_out_w"],
+            1,
+            numeric=True,
+        )
+
+        self.power_canvas = self._create_plot_canvas(parent)
+        self.power_canvas.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
+
+        ttk.Label(parent, textvariable=self.packet_status).grid(
+            row=2,
+            column=0,
+            sticky="ew",
+            padx=12,
+            pady=(0, 12),
+        )
 
     def _create_plot_canvas(self, parent: ttk.Frame) -> tk.Canvas:
         return tk.Canvas(
@@ -743,6 +795,8 @@ class MpptSerialGui(tk.Tk):
         i_out_a = output_current_from_raw(packet.i_out_raw)
         v_out_v = output_voltage_from_raw(packet.v_out_raw)
         v_in_v = input_voltage_from_raw(packet.v_in_raw)
+        p_in_w = v_in_v * i_in_a
+        p_out_w = v_out_v * i_out_a
 
         self.current_buffers["i_in_a"].append(i_in_a)
         self.current_buffers["i_out_a"].append(i_out_a)
@@ -751,6 +805,8 @@ class MpptSerialGui(tk.Tk):
         self.temperature_buffers["temp0_c"].append(packet.temp0_c)
         self.temperature_buffers["temp1_c"].append(packet.temp1_c)
         self.irradiance_buffers["irr_w_m2"].append(packet.irr_w_m2)
+        self.power_buffers["p_in_w"].append(p_in_w)
+        self.power_buffers["p_out_w"].append(p_out_w)
 
         # A leading blank reserves the sign column for positive values. Combined
         # with the fixed-width font above, crossing zero no longer moves digits
@@ -759,6 +815,8 @@ class MpptSerialGui(tk.Tk):
         self.measurement_values["i_out_a"].set(f"{i_out_a: .2f}")
         self.measurement_values["v_out_v"].set(f"{v_out_v: .2f}")
         self.measurement_values["v_in_v"].set(f"{v_in_v: .2f}")
+        self.power_values["p_in_w"].set(f"{p_in_w: .2f}")
+        self.power_values["p_out_w"].set(f"{p_out_w: .2f}")
         self.sensor_values["temp0_c"].set(format_optional(packet.temp0_c, "{: .2f}"))
         self.sensor_values["temp1_c"].set(format_optional(packet.temp1_c, "{: .2f}"))
         self.sensor_values["irr_w_m2"].set(format_optional(packet.irr_w_m2, "{: .0f}"))
@@ -813,6 +871,15 @@ class MpptSerialGui(tk.Tk):
             "Irradiance (W/m2)",
             "Waiting for irradiance data",
             10.0,
+        )
+        self._draw_series_plot(
+            self.power_canvas,
+            self.power_buffers,
+            {"p_in_w": "#2563eb", "p_out_w": "#16a34a"},
+            {"p_in_w": "Input power", "p_out_w": "Output power"},
+            "Input and output power (W)",
+            "Waiting for power data",
+            5.0,
         )
         self.after(100, self._draw_plot)
 
