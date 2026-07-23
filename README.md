@@ -1,17 +1,17 @@
 # ENR420 MPPT Circuit Implementation Guide
 
-This repository supports the ENR420 MPPT circuit implementation project. It brings together the student guide, STM32 reference material, and the MPPT firmware scaffold used to configure and program the STM32 NUCLEO-F303K8 controller.
+This repository contains the ENR420 student guide, a preconfigured STM32CubeIDE project, the MPPT firmware, a serial-monitoring GUI, and supporting reference material for the STM32 NUCLEO-F303K8 controller.
 
-> The firmware in this repository is not a finished MPPT solution. It provides the project structure, peripheral setup, measurement pipeline, state machine, telemetry, and safety scaffold. Students still need to implement and validate the actual MPPT control algorithm.
+> The supplied code includes the peripheral configuration, measurement pipeline, P&O MPPT controller, state machine, temperature and irradiance sensing, telemetry, and basic fault handling. It still requires careful laboratory validation, sensor calibration, and project-specific operating-limit decisions. Practical over-voltage, over-current, and over-temperature thresholds are not supplied.
 
 ## Start Here
 
-1. Read the [MPPT Circuit Student Implementation Guide](ENR420%20-%20MPPT%20Implemetation%20Guide.pdf).
-2. Open the [MPPT firmware](MPPT%20firmware/) project in STM32CubeIDE.
-3. Review [`MPPT firmware/Core/Src/main.c`](MPPT%20firmware/Core/Src/main.c), especially the MPPT hook linked below.
-4. Build and flash the firmware to the STM32 NUCLEO-F303K8.
-5. Test the converter carefully within the operating limits described in the guide.
-6. Use GitHub Issues for problems, unclear instructions, firmware questions, or documentation gaps.
+1. On GitHub, select **Code → Download ZIP**, then extract the ZIP to a normal working folder.
+2. Install [STM32CubeIDE](https://www.st.com/en/development-tools/stm32cubeide.html).
+3. In STM32CubeIDE, select **File → Import → General → Existing Projects into Workspace**. Set the root directory to the extracted `MPPT firmware` folder, select the project named `Code`, and finish the import. Import the root project, not the nested `MPPT firmware/STM32CubeIDE` folder.
+4. Build `Code`, connect the NUCLEO board through its ST-LINK USB connector with the converter power stage unenergised, launch the supplied `Code Debug` configuration, and select **Resume** after programming stops at `main()`.
+5. From the repository root, run `python -m pip install -r requirements-mppt-gui.txt`, then `python mppt_serial_gui.py`. Select the ST-LINK virtual COM port at 115200 baud and connect.
+6. Read the [MPPT Circuit Student Implementation Guide](ENR420%20-%20MPPT%20Implemetation%20Guide.pdf) before wiring sensors or energising the converter.
 
 ## Included Resources
 
@@ -20,9 +20,24 @@ This repository supports the ENR420 MPPT circuit implementation project. It brin
 | [MPPT Circuit Student Implementation Guide](ENR420%20-%20MPPT%20Implemetation%20Guide.pdf) | Main PDF guide for the project. Start here. |
 | [MPPT firmware](MPPT%20firmware/) | STM32CubeIDE firmware project for the MPPT controller. |
 | [STM32F reference manual chapters](Manual%20-%20STM32F/) | Split STM32F303 reference-manual sections for easier lookup. |
-| [Full STM32 reference manual PDF](rm0316-stm32f303xbcde-stm32f303x68-stm32f328x8-stm32f358xc-stm32f398xe-advanced-armbased-mcus-stmicroelectronics.pdf) | Complete ST RM0316 reference manual. |
 | [Serial monitor GUI](mppt_serial_gui.py) | Optional Python helper for monitoring serial data from the controller. |
 | [Four-switch buck-boost PSIM schematic](Four_switch_buck_boost.psimsch) | Optional PSIM schematic for simulating the converter and exploring its operating principles. |
+
+## Sensor Wiring at a Glance
+
+Sensor connectors are low-voltage signal connections. They are separate from the high-power **Solar panels in** and output/load terminals; never land a sensor wire on a PV power terminal.
+
+| Sensor | Wire colour | PCB connector and input |
+| --- | --- | --- |
+| DS18B20 temperature | Red | J8 `3V3` |
+| DS18B20 temperature | Yellow | J8 `DQ` |
+| DS18B20 temperature | Black | J8 `SGND` |
+| SEN0640 irradiance | Brown | J6 `5V` |
+| SEN0640 irradiance | Yellow | J6 `A` |
+| SEN0640 irradiance | Blue | J6 `B` |
+| SEN0640 irradiance | Black | J6 `SGND` |
+
+All four DS18B20 probes share J8 in parallel. The complete 1-Wire bus needs exactly one 4.7 kΩ pull-up from `DQ` to `3V3`: first verify that R20 is populated with a suitable value, and add one external resistor only if it is absent or unsuitable. The guide explains how to identify and label the discovery-order channels `Temp0`–`Temp3`.
 
 ## Further Reading
 
@@ -37,7 +52,6 @@ Students who want more background on four-switch buck-boost converter control st
 |-- ENR420 - MPPT Implemetation Guide.pdf   # Compiled student guide
 |-- MPPT firmware/                          # STM32CubeIDE firmware project
 |-- Manual - STM32F/                        # STM32 reference manual split by section
-|-- rm0316-...-stmicroelectronics.pdf       # Full STM32F reference manual
 |-- Four_switch_buck_boost.psimsch          # Optional PSIM converter simulation schematic
 |-- mppt_serial_gui.py                      # Optional serial monitoring GUI
 |-- requirements-mppt-gui.txt               # Python dependency list for the GUI
@@ -49,51 +63,45 @@ The LaTeX source and figure assets used to create the guide are local authoring 
 
 ## MPPT Firmware
 
-The firmware project is located in [`MPPT firmware/`](MPPT%20firmware/). It includes the STM32CubeIDE project files, CubeMX configuration, source code, HAL drivers, and linker script.
+The firmware project is located in [`MPPT firmware/`](MPPT%20firmware/). It includes the STM32CubeIDE project files, generated peripheral source, application code, HAL drivers, and linker script.
 
 | Path | Purpose |
 | --- | --- |
-| [`MPPT firmware/Code.ioc`](MPPT%20firmware/Code.ioc) | CubeMX peripheral configuration. |
-| [`MPPT firmware/Core/Src/main.c`](MPPT%20firmware/Core/Src/main.c) | Main application entry point and MPPT control scaffold. |
+| [`MPPT firmware/.project`](MPPT%20firmware/.project) | Root STM32CubeIDE project descriptor; the imported project is named `Code`. |
+| [`MPPT firmware/Code.ioc`](MPPT%20firmware/Code.ioc) | Legacy CubeMX metadata. It is currently out of sync with the supplied generated source and must not be used to regenerate the project. |
+| [`MPPT firmware/Core/Src/main.c`](MPPT%20firmware/Core/Src/main.c) | Main application entry point and cooperative state-machine loop. |
+| [`MPPT firmware/Core/Src/MpptController.c`](MPPT%20firmware/Core/Src/MpptController.c) | Supplied P&O MPPT controller. |
 | [`MPPT firmware/Core/Inc/`](MPPT%20firmware/Core/Inc/) | Application header files. |
 | [`MPPT firmware/Drivers/`](MPPT%20firmware/Drivers/) | CMSIS and STM32 HAL driver files. |
 | [`MPPT firmware/STM32F303K8TX_FLASH.ld`](MPPT%20firmware/STM32F303K8TX_FLASH.ld) | Linker script for the STM32F303K8 target. |
 
-## Firmware Implementation Status
+## Supplied Firmware
 
-In this section, "implemented" means the functionality is present in the current codebase. It does not mean the converter has been fully bench-tested across all operating conditions.
+The current package provides these code-level capabilities:
 
-### What has been implemented
-
-| Area | Current status |
+| Area | Supplied implementation |
 | --- | --- |
-| Project setup | STM32CubeIDE/CubeMX project for the STM32F303K8 target. |
-| Peripheral setup | ADC1, ADC2, GPIO, TIM1 PWM, TIM3, USART1, and USART2 are configured. |
-| Control structure | `main.c` contains a cooperative main loop and MPPT state machine with `INIT`, `IDLE`, `STARTUP`, `RUN`, and `FAULT` states. |
-| Measurements | ADC channels are polled and converted from raw counts to voltage, current, and PV power estimates. Current-sensor zero offsets are captured during initialization. |
-| Serial interface | The firmware provides start, stop, fault reset, status, and help commands over the serial console. |
-| Telemetry | Raw measurement packets are transmitted for debugging; the optional PC GUI prepends PC receive time as Unix milliseconds. |
-| PWM and safety scaffold | TIM1 complementary PWM duty commands, gate-driver disable control, duty clamping, startup duty, ADC saturation checking, and latched fault handling are present. |
-| Irradiance sensor scaffold | `IrradianceSensor_Task()` is called from the main loop and contains a disabled RS485/Modbus polling skeleton with request building, CRC checking, RS485 direction control, and response parsing placeholders. |
+| Peripheral setup | ADC1/ADC2 synchronized acquisition, DMA, GPIO, TIM1 complementary PWM, timebases, USART1, and USART2 are configured in the generated C source. |
+| Control | The cooperative `INIT`, `IDLE`, `STARTUP`, `RUN`, and `FAULT` state machine uses the supplied P&O MPPT controller, settling and sampling phases, duty clamping, and controlled startup. |
+| Measurements | Raw ADC samples are averaged and converted to current, voltage, and input-power estimates; current-sensor zero offsets are captured during initialization. |
+| Temperature | The 1-Wire driver discovers multiple DS18B20 probes. Telemetry publishes four discovery indices as `Temp0`–`Temp3`; an unavailable probe is reported as `NA`. |
+| Irradiance and RS-485 | The SEN0640 is polled over USART1 using the board's [ST4E1216IDT transceiver](https://www.st.com/resource/en/datasheet/st4e1216.pdf). Request framing, Modbus CRC, big-endian register parsing, half-duplex direction control, and non-blocking transaction handling are implemented. |
+| PC console | USART2 provides `s` start, `x` stop, `r` fault reset, `?` status, and `h` help commands through the ST-LINK virtual COM port. |
+| Telemetry and GUI | Fixed-position CSV telemetry, live measurements, four temperature traces, irradiance, MPPT status, and optional PC-side CSV recording are supplied. |
+| Basic safe-state handling | Gate-driver disable control, PWM duty clamps, ADC acquisition/saturation faults, and latched fault handling are present. |
 
-### What still needs to be done
+These statements describe the source code, not a completed hardware qualification. Before energising the converter, verify sensor scaling, PWM routing and polarity, dead time, disable behaviour, and waveforms on the actual PCB. Select approved practical voltage, current, temperature, and communication limits for the laboratory setup; the supplied firmware does not claim those engineering-unit protections.
 
-| Work item | Where to work |
-| --- | --- |
-| Implement the real MPPT algorithm using PV voltage, PV current, and PV power to update the buck and boost duty commands. | [`Mppt_CalculateDuty()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L559) |
-| Validate ADC channel mapping, sensor scaling factors, current offsets, and calculated engineering units against real measurements. | [`Measurements_Update()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L597) |
-| Verify duty limits, PWM polarity, complementary outputs, gate-driver enable/disable behaviour, and oscilloscope waveforms before energising the converter. | [`PowerStage_SetDuty()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L812) |
-| Add practical operating-limit protection. The present check catches saturated ADC readings only; real over-voltage, over-current, and laboratory safety thresholds still need to be added. | [`Measurements_AreInAdcRange()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L633) |
-| Complete the irradiance sensor / RS485 Modbus request-response logic. Confirm the sensor slave address, register address, register count, response format, and scaling, then enable and complete the polling scaffold. | [`IrradianceSensor_Task()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L1138) and [`IrradianceSensor_ParseReadResponse()` in `main.c`](MPPT%20firmware/Core/Src/main.c#L1246) |
+STM32CubeIDE is used to edit, build, flash, and debug this package. Standalone [STM32CubeMX](https://www.st.com/en/development-tools/stm32cubemx.html) is not needed for the supplied project, but it is useful when configuring a new STM32 project from scratch. Do **not** regenerate this project from `Code.ioc`; the current generated C source is the configuration authority.
 
 ## Optional Serial GUI
 
 The Python serial monitor can be used to inspect controller output while testing.
 
-Install the dependency:
+Install the dependency from the repository root:
 
 ```bash
-pip install -r requirements-mppt-gui.txt
+python -m pip install -r requirements-mppt-gui.txt
 ```
 
 Run the GUI:
@@ -102,14 +110,14 @@ Run the GUI:
 python mppt_serial_gui.py
 ```
 
-After connecting to the controller, select **Start Recording** to choose a CSV
+Select the ST-LINK virtual COM port, leave the baud rate at 115200, and select **Connect**. Check **Status** before **Start**. Select **Start Recording** to choose a CSV
 file and begin logging telemetry. The button changes to **Stop Recording** while
 logging. Every telemetry packet is written and flushed to disk immediately, so
 the GUI does not keep the complete recording in memory. Recording stops cleanly
 when the button is selected again, the serial connection closes, or the GUI exits.
 
-The CSV contains the PC receive time followed by the raw telemetry fields:
-`unix_ms,i_in_raw,i_out_raw,v_out_raw,v_in_raw,valid,temp0_c,temp1_c,irr_w_m2,state,fault`.
+The CSV contains the PC receive time followed by the telemetry fields. New columns are appended so existing column positions remain unchanged:
+`unix_ms,i_in_raw,i_out_raw,v_out_raw,v_in_raw,valid,temp0_c,temp1_c,irr_w_m2,state,fault,mppt_phase,mppt_gain,mppt_step,buck_duty,boost_duty,reference_power_w,sampled_power_w,temp2_c,temp3_c`.
 Status and help messages shown in the terminal are not included.
 
 ## Getting Help
