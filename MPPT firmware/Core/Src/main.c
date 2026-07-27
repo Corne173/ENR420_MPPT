@@ -53,10 +53,9 @@
  * UART printing does not dominate the control loop.
  */
 #define FAST_TASK_PERIOD_MS        (1U)
-#define MPPT_TASK_PERIOD_MS        (50U)
-#define TELEMETRY_TASK_PERIOD_MS   (100U)
+#define MPPT_TASK_PERIOD_MS        (1U)
+#define TELEMETRY_TASK_PERIOD_MS   (50U)  /* 20 telemetry packets per second */
 #define STARTUP_SETTLE_TIME_MS     (500U)
-#define SENSOR_TASK_PERIOD_MS                   (1000U)
 
 
 
@@ -79,7 +78,6 @@ static uint32_t mppt_state_entered_ms;
 static uint32_t fast_task_last_ms;
 static uint32_t mppt_task_last_ms;
 static uint32_t telemetry_task_last_ms;
-static uint32_t sensor_task_last_ms = 0U;
 
 volatile State_t state = STATE_INIT;
 volatile Fault_t mppt_fault = FAULT_NONE;
@@ -170,20 +168,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    /* Handles one-byte user commands received over USART2. */
-    SerialConsole_Task();
     const uint32_t now_ms = HAL_GetTick();
-    /* Student hook for irradiance-sensor polling over USART1/RS485 Modbus. */
-    /* The main loop runs continuously. This guard makes the irradiance ad temperature poll run
-    * only once per IRRADIANCE_TASK_PERIOD_MS instead of on every loop iteration. */
-    if (Timebase_HasElapsed(now_ms, sensor_task_last_ms, SENSOR_TASK_PERIOD_MS))
-    {
-      sensor_task_last_ms = now_ms;
-      IrradianceSensor_Task();
-      TemperatureSensor_Task();
-    }
-    
-    
 
     /* Runs measurement, protection, state transitions, and MPPT updates. */
     #if 1
@@ -196,12 +181,8 @@ int main(void)
       (void)runFastTasks();
     }
 
-    /* Telemetry is intentionally slower than measurement/protection. */
-    if (Timebase_HasElapsed(now_ms, telemetry_task_last_ms, TELEMETRY_TASK_PERIOD_MS))
-    {
-      telemetry_task_last_ms = now_ms;
-      Telemetry_Task();
-    }
+    /* Handle console commands after the safety-critical measurement checks. */
+    SerialConsole_Task();
 
     switch ((State_t)state)
     {
@@ -222,7 +203,17 @@ int main(void)
           }
           else
           {
-            enterFault(FAULT_ADC_READ);
+            const Measurements_t *measurements = Measurements_GetLatest();
+            const Fault_t acquisition_fault = Measurements_GetAcquisitionFault();
+            if (!measurements->valid)
+            {
+              enterFault((acquisition_fault != FAULT_NONE) ? acquisition_fault
+                                                           : FAULT_ADC_READ);
+            }
+            else
+            {
+              enterFault(FAULT_ADC_RANGE);
+            }
           }
         }
         break;
@@ -270,11 +261,24 @@ int main(void)
           stop_requested = false;
           mppt_start_requested = false;
           mppt_fault = FAULT_NONE;
-          setState(STATE_IDLE);
+          /* Rebuild the complete measurement chain instead of merely clearing
+           * the visible fault and immediately tripping again on a stopped DMA. */
+          controllerInit();
         }
         break;
     }
     #endif
+
+    /* Sensor tasks only advance their state machines and never wait in the loop. */
+    TemperatureSensor_Task();
+    IrradianceSensor_Task();
+
+    /* Queue telemetry after control and sensor state have been serviced. */
+    if (Timebase_HasElapsed(now_ms, telemetry_task_last_ms, TELEMETRY_TASK_PERIOD_MS))
+    {
+      telemetry_task_last_ms = now_ms;
+      Telemetry_Task();
+    }
 
     /* Test-only status indication on LD3/PB3. See the warning in the function. */
     StatusLed_Task(state);
@@ -333,29 +337,47 @@ void SystemClock_Config(void)
 //Change to converter initialisation
 void controllerInit(void)
 {
+  Fault_t acquisition_fault;
+
   /* The first firmware action for the converter controller is always safe output. */
   PowerStage_Disable();
 
+  /* Calibration requires disabled ADCs. This is also the cleanup path when a
+   * deliberate fault reset restarts acquisition after a DMA/ADC failure. */
+  Measurements_StopSynchronized();
+
   /* ADC calibration compensates internal ADC errors before readings are trusted. */
-  if ((HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK) ||
-      (HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) != HAL_OK))
+  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
   {
-    enterFault(FAULT_ADC_READ);
+    enterFault(FAULT_ADC1_CALIBRATION);
+    return;
+  }
+  if (HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) != HAL_OK)
+  {
+    enterFault(FAULT_ADC2_CALIBRATION);
     return;
   }
 
-  /* Take one measurement before offset calibration so the current-sensor zero
-   * points can be stored while no converter current should be flowing. */
-  if (!Measurements_Update())
+  /* Arm both independent DMA streams before TIM1 starts their shared TRGO trigger.
+   * The helper waits for complete buffers and publishes the first measurement. */
+  acquisition_fault = Measurements_StartSynchronized();
+  if (acquisition_fault != FAULT_NONE)
   {
-    enterFault(FAULT_ADC_READ);
+    enterFault(acquisition_fault);
     return;
   }
 
+  /* Store the no-load current-sensor levels from PWM-synchronised samples. */
   Measurements_CaptureZeroCurrentOffsets();
 
   /* Re-read after offset capture so converted current values use the new offsets. */
-  (void)Measurements_Update();
+  if (!Measurements_Update())
+  {
+    acquisition_fault = Measurements_GetAcquisitionFault();
+    enterFault((acquisition_fault != FAULT_NONE) ? acquisition_fault
+                                                 : FAULT_ADC_READ);
+    return;
+  }
   setState(STATE_IDLE);
 }
 
@@ -447,7 +469,9 @@ bool runFastTasks(void)
   {
     if (current_state != STATE_FAULT)
     {
-      enterFault(FAULT_ADC_READ);
+      const Fault_t acquisition_fault = Measurements_GetAcquisitionFault();
+      enterFault((acquisition_fault != FAULT_NONE) ? acquisition_fault
+                                                   : FAULT_ADC_READ);
       return false;
     }
 
@@ -468,20 +492,32 @@ bool runFastTasks(void)
 
 
 /**
-  * @brief  UART receive-complete callback dispatches to the USART2 PC console.
-  * @param  huart UART handle that completed reception.
-  */
+ * @brief  UART transmit-complete callback dispatches to the active UART module.
+ * @param  huart UART handle that completed transmission.
+ */
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  IrradianceSensor_TxCpltCallback(huart);
+  SerialConsole_TxCpltCallback(huart);
+}
+
+/**
+ * @brief  UART receive-complete callback dispatches to the active UART module.
+ * @param  huart UART handle that completed reception.
+ */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
+  IrradianceSensor_RxCpltCallback(huart);
   SerialConsole_RxCpltCallback(huart);
 }
 
 /**
-  * @brief  UART error callback dispatches to the USART2 PC console.
-  * @param  huart UART handle that reported an error.
-  */
+ * @brief  UART error callback dispatches to the active UART module.
+ * @param  huart UART handle that reported an error.
+ */
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
+  IrradianceSensor_ErrorCallback(huart);
   SerialConsole_ErrorCallback(huart);
 }
 
@@ -520,6 +556,42 @@ const char *getFaultName(Fault_t fault)
   {
     case FAULT_NONE:
       return "NONE";
+    case FAULT_ADC1_CALIBRATION:
+      return "ADC1_CAL";
+    case FAULT_ADC2_CALIBRATION:
+      return "ADC2_CAL";
+    case FAULT_ADC1_DMA_START:
+      return "ADC1_DMA_START";
+    case FAULT_ADC2_DMA_START:
+      return "ADC2_DMA_START";
+    case FAULT_ADC_TRIGGER_START:
+      return "ADC_TRIGGER_START";
+    case FAULT_ADC_TRIGGER_LOST:
+      return "ADC_TRIGGER_LOST";
+    case FAULT_ADC1_FIRST_BUFFER:
+      return "ADC1_NO_BUFFER";
+    case FAULT_ADC2_FIRST_BUFFER:
+      return "ADC2_NO_BUFFER";
+    case FAULT_ADC_BOTH_FIRST_BUFFER:
+      return "ADC_BOTH_NO_BUFFER";
+    case FAULT_ADC1_OVERRUN:
+      return "ADC1_OVERRUN";
+    case FAULT_ADC2_OVERRUN:
+      return "ADC2_OVERRUN";
+    case FAULT_ADC1_DMA_TRANSFER:
+      return "ADC1_DMA_TRANSFER";
+    case FAULT_ADC2_DMA_TRANSFER:
+      return "ADC2_DMA_TRANSFER";
+    case FAULT_ADC1_INTERNAL:
+      return "ADC1_INTERNAL";
+    case FAULT_ADC2_INTERNAL:
+      return "ADC2_INTERNAL";
+    case FAULT_ADC1_STALE:
+      return "ADC1_STALE";
+    case FAULT_ADC2_STALE:
+      return "ADC2_STALE";
+    case FAULT_ADC_SNAPSHOT:
+      return "ADC_SNAPSHOT";
     case FAULT_ADC_READ:
       return "ADC_READ";
     case FAULT_ADC_RANGE:

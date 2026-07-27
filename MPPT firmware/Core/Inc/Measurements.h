@@ -10,6 +10,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "main.h"
+
 /*
  * One snapshot of the converter measurements.
  *
@@ -44,6 +46,9 @@ typedef struct
   uint32_t updated_ms;
 } Measurements_t;
 
+Fault_t Measurements_StartSynchronized(void);
+void Measurements_StopSynchronized(void);
+Fault_t Measurements_GetAcquisitionFault(void);
 bool Measurements_Update(void);
 const Measurements_t *Measurements_GetLatest(void);
 void Measurements_CaptureZeroCurrentOffsets(void);

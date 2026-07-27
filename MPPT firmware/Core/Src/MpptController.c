@@ -9,6 +9,8 @@
 #include "Measurements.h"
 #include "PowerStage.h"
 
+#include <stdint.h>
+
 /*
  * Duty-cycle command for the two half bridges of the four-switch buck-boost.
  * Values are normalised fractions, not timer counts: 0.25 means 25% duty.
@@ -21,43 +23,84 @@ typedef struct MpptDutyCommand
 
 typedef struct PnOParameters
 {
-  float Pprev;
-  float Aprev;
-  float increment;
+  float power_samples_w[8];
+  float reference_power_w;
+  float reference_gain;
+  float gain;
   float step;
+  uint8_t power_sample_count;
+  uint32_t command_changed_ms;
+  uint32_t last_sample_ms;
+  bool reference_valid;
 } PnoParameters_t;
 
 /* Conservative startup command. */
 #define STARTUP_BUCK_DUTY          (0.1f)
 #define STARTUP_BOOST_DUTY         (0.0f)
 
-#define PnOMode 1
-#define PNO_GAIN_MIN (0.0f)
-#define PNO_GAIN_MAX (20.0f)
+#define PnOMode                        (1)
 
-static MpptDutyCommand_t MpptController_CalculateDuty(float panel_voltage_v, float panel_current_a);
-static MpptDutyCommand_t PnO_Init(void);
-static MpptDutyCommand_t PnO_Run(float panel_voltage_v, float panel_current_a);
+/* The four-switch conversion ratio is M = D_buck / (1 - D_boost).
+ * Derive the maximum gain from the real power-stage duty limit so the MPPT
+ * never walks through commands that PowerStage_SetDuty() would clip. */
+#define PNO_INITIAL_GAIN               (0.10f)
+#define PNO_GAIN_MIN                   (0.0f)
+#define PNO_GAIN_MAX                   (POWER_STAGE_DUTY_MAX / \
+                                        (1.0f - POWER_STAGE_DUTY_MAX))
+
+/* Every changed command is allowed to settle before a short, fresh measurement
+ * window is collected. Samples from the previous operating point are never
+ * mixed into the new power estimate. */
+#define PNO_SETTLE_TIME_MS              (20U)
+#define PNO_POWER_SAMPLE_COUNT          (8U)
+#define PNO_TRIMMED_SAMPLE_COUNT        (PNO_POWER_SAMPLE_COUNT - 2U)
+
+/* Ignore changes smaller than the larger of the absolute and relative noise
+ * bands. These are initial bench-tuning values for approximately 100 W tests. */
+#define PNO_POWER_DEADBAND_MIN_W       (0.10f)
+#define PNO_POWER_DEADBAND_RELATIVE    (0.0005f)
+
+/* Bounded multiplicative step control moves quickly after repeated clear
+ * improvements without amplifying one noisy delta-power sample. A rejected or
+ * inconclusive probe always returns to the fine step. */
+#define PNO_STEP_INITIAL                (0.010f)
+#define PNO_STEP_MIN                    (0.0025f)
+#define PNO_STEP_MAX                    (0.020f)
+#define PNO_STEP_GROWTH                 (1.50f)
+
+static MpptDutyCommand_t MpptController_CalculateDuty(float panel_voltage_v,
+                                                       float panel_current_a,
+                                                       uint32_t sample_ms);
+static MpptDutyCommand_t PnO_Init(uint32_t now_ms);
+static MpptDutyCommand_t PnO_Run(float panel_power_w, uint32_t sample_ms);
 static MpptDutyCommand_t getDutiesFromGain(float gain);
 static float PnO_ClampGain(float gain);
+static float PnO_Absolute(float value);
+static float PnO_ClampStepMagnitude(float step_magnitude);
+static float PnO_CalculatePowerDeadband(float reference_power_w);
+static float PnO_CalculateTrimmedMean(void);
+static void PnO_GrowStep(void);
+static MpptDutyCommand_t PnO_AdvanceGain(uint32_t now_ms);
+static void PnO_BeginSettling(uint32_t now_ms);
+static void PnO_UpdateCommandStatus(MpptDutyCommand_t command);
+static bool MpptController_CommandChanged(MpptDutyCommand_t first,
+                                          MpptDutyCommand_t second);
 
 volatile bool mppt_start_requested = false;
 volatile bool stop_requested = false;
 volatile bool fault_reset_requested= false;
 
-MpptDutyCommand_t mppt_command = {0};
-PnoParameters_t pno_par = {0};
-uint32_t mppt_state_entered_ms = 0U;
-uint32_t fast_task_last_ms = 0U;
-uint32_t mppt_task_last_ms = 0U;
-uint32_t telemetry_task_last_ms = 0U;
+static MpptDutyCommand_t mppt_command = {0};
+static PnoParameters_t pno_par = {0};
+static MpptControllerStatus_t mppt_status = {
+    .phase = MPPT_CONTROLLER_PHASE_SETTLING};
 
 /**
   * @brief  Start the MPPT algorithm */
 void MpptController_Startup(void)
 {
   #if (PnOMode)
-    mppt_command = PnO_Init();
+    mppt_command = PnO_Init(HAL_GetTick());
   #else
     /* Start with a small fixed command. Students should verify this on an
     * oscilloscope before using real PV panels or a battery/load. */
@@ -81,7 +124,9 @@ void MpptController_Startup(void)
   * @param  panel_current_a Input/PV current in amps.
   * @retval Buck and boost duty-cycle command requested by the MPPT algorithm.
   */
-static MpptDutyCommand_t MpptController_CalculateDuty(float panel_voltage_v, float panel_current_a)
+static MpptDutyCommand_t MpptController_CalculateDuty(float panel_voltage_v,
+                                                       float panel_current_a,
+                                                       uint32_t sample_ms)
 {
   /* Start from the previous command. If students do not change anything below,
    * the converter will hold its last duty cycle instead of jumping abruptly. */
@@ -114,7 +159,7 @@ static MpptDutyCommand_t MpptController_CalculateDuty(float panel_voltage_v, flo
    */
 
   #if (PnOMode)
-    next_command = PnO_Run(panel_voltage_v, panel_current_a);
+    next_command = PnO_Run(panel_power_w, sample_ms);
   #endif
   
   
@@ -128,50 +173,121 @@ static MpptDutyCommand_t MpptController_CalculateDuty(float panel_voltage_v, flo
 void MpptController_Update(void)
 {
   const Measurements_t *measurements = Measurements_GetLatest();
+  MpptDutyCommand_t next_command;
 
-  /* The MPPT algorithm receives input-side PV voltage and current. */
-  MpptDutyCommand_t next_command =
-      MpptController_CalculateDuty(measurements->v_in_v, measurements->i_in_a);
-
-  /* The power-stage layer clamps and applies the returned command. */
-  mppt_command = next_command;
-  PowerStage_SetDuty(mppt_command.buck_duty, mppt_command.boost_duty);
-}
-
-MpptDutyCommand_t PnO_Init(void)
-{
-  float Ainit = 0.1;
-
-  MpptDutyCommand_t pno_init_command = getDutiesFromGain(Ainit);
-
-  pno_par.increment=0.01f;
-  pno_par.Pprev = 0.0f;
-  pno_par.Aprev = PnO_ClampGain(Ainit);
-  pno_par.step = pno_par.increment; 
-  return pno_init_command;
-}
-
-
-MpptDutyCommand_t PnO_Run(float panel_voltage_v, float panel_current_a)
-{
-  float panel_power = panel_voltage_v * panel_current_a;
-  float deltaP = panel_power - pno_par.Pprev;
-  float Apno = pno_par.Aprev;
-
-  MpptDutyCommand_t pno_command = {0};
-
-  if (deltaP < 0.0f)
+  if (!measurements->valid)
   {
-    pno_par.step = -pno_par.step;
+    return;
   }
 
-  Apno = PnO_ClampGain(pno_par.Aprev + pno_par.step);
+  /* The MPPT algorithm receives input-side PV voltage and current. */
+  next_command = MpptController_CalculateDuty(measurements->v_in_v,
+                                               measurements->i_in_a,
+                                               measurements->updated_ms);
 
-  pno_par.Aprev = Apno;
-  pno_par.Pprev = panel_power;
+  /* Rewriting the same compare values every millisecond is unnecessary and
+   * obscures whether a real MPPT perturbation occurred. */
+  if (MpptController_CommandChanged(mppt_command, next_command))
+  {
+    mppt_command = next_command;
+    PowerStage_SetDuty(mppt_command.buck_duty, mppt_command.boost_duty);
+  }
+}
 
-  pno_command = getDutiesFromGain(Apno);
-  return pno_command;
+MpptDutyCommand_t PnO_Init(uint32_t now_ms)
+{
+  MpptDutyCommand_t command;
+
+  pno_par.reference_power_w = 0.0f;
+  pno_par.gain = PnO_ClampGain(PNO_INITIAL_GAIN);
+  pno_par.reference_gain = pno_par.gain;
+  pno_par.step = PNO_STEP_INITIAL;
+  pno_par.power_sample_count = 0U;
+  pno_par.reference_valid = false;
+  pno_par.last_sample_ms = UINT32_MAX;
+
+  mppt_status.reference_power_w = 0.0f;
+  mppt_status.sampled_power_w = 0.0f;
+  PnO_BeginSettling(now_ms);
+
+  command = getDutiesFromGain(pno_par.gain);
+  PnO_UpdateCommandStatus(command);
+  return command;
+}
+
+
+MpptDutyCommand_t PnO_Run(float panel_power_w, uint32_t sample_ms)
+{
+  MpptDutyCommand_t command = getDutiesFromGain(pno_par.gain);
+  float sampled_power_w;
+  float delta_power_w;
+  float power_deadband_w;
+
+  if (mppt_status.phase == MPPT_CONTROLLER_PHASE_SETTLING)
+  {
+    if ((sample_ms - pno_par.command_changed_ms) < PNO_SETTLE_TIME_MS)
+    {
+      return command;
+    }
+
+    mppt_status.phase = MPPT_CONTROLLER_PHASE_SAMPLING;
+    pno_par.power_sample_count = 0U;
+  }
+
+  /* The scheduler can call more than once for one measurement timestamp. Only
+   * distinct 1 ms snapshots are admitted to the operating-point window. */
+  if (sample_ms == pno_par.last_sample_ms)
+  {
+    return command;
+  }
+
+  pno_par.last_sample_ms = sample_ms;
+  pno_par.power_samples_w[pno_par.power_sample_count] = panel_power_w;
+  pno_par.power_sample_count++;
+
+  if (pno_par.power_sample_count < PNO_POWER_SAMPLE_COUNT)
+  {
+    return command;
+  }
+
+  sampled_power_w = PnO_CalculateTrimmedMean();
+  mppt_status.sampled_power_w = sampled_power_w;
+
+  /* The initial command and every restored best command are sampled as a fresh
+   * reference before another candidate is applied. */
+  if (!pno_par.reference_valid)
+  {
+    pno_par.reference_power_w = sampled_power_w;
+    pno_par.reference_gain = pno_par.gain;
+    pno_par.reference_valid = true;
+    mppt_status.reference_power_w = sampled_power_w;
+    return PnO_AdvanceGain(sample_ms);
+  }
+
+  delta_power_w = sampled_power_w - pno_par.reference_power_w;
+  power_deadband_w = PnO_CalculatePowerDeadband(pno_par.reference_power_w);
+
+  if (delta_power_w > power_deadband_w)
+  {
+    /* A clear improvement becomes the new reference. Continue in the same
+     * direction without re-measuring the operating point that was just sampled. */
+    pno_par.reference_power_w = sampled_power_w;
+    pno_par.reference_gain = pno_par.gain;
+    mppt_status.reference_power_w = sampled_power_w;
+    PnO_GrowStep();
+    return PnO_AdvanceGain(sample_ms);
+  }
+
+  /* A loss or an inconclusive change is rejected after this single measurement
+   * window. Restore the best command immediately, reverse, and use the fine
+   * perturbation so steady-state hunting is bounded. */
+  pno_par.step = (pno_par.step >= 0.0f) ? -PNO_STEP_MIN : PNO_STEP_MIN;
+  pno_par.gain = pno_par.reference_gain;
+  pno_par.reference_valid = false;
+  PnO_BeginSettling(sample_ms);
+  command = getDutiesFromGain(pno_par.gain);
+  PnO_UpdateCommandStatus(command);
+  return command;
 }
 
 MpptDutyCommand_t getDutiesFromGain(float gain)
@@ -179,13 +295,20 @@ MpptDutyCommand_t getDutiesFromGain(float gain)
   MpptDutyCommand_t duties;
   gain = PnO_ClampGain(gain);
 
-  if (gain < 1.0f) {
+  if (gain <= POWER_STAGE_DUTY_MAX)
+  {
     duties.buck_duty = gain;
     duties.boost_duty = 0.0f;
-  } else {
-    duties.buck_duty = 1.0f;
-    duties.boost_duty = -1.0f / gain + 1.0f;
   }
+  else
+  {
+    /* Start boost action as soon as buck reaches its real 95% limit. This keeps
+     * M = D_buck / (1 - D_boost) continuous and removes the old 0.95-to-1.0
+     * region in which every requested buck duty was clipped to the same value. */
+    duties.buck_duty = POWER_STAGE_DUTY_MAX;
+    duties.boost_duty = 1.0f - (POWER_STAGE_DUTY_MAX / gain);
+  }
+
   return duties;
 }
 
@@ -202,4 +325,129 @@ static float PnO_ClampGain(float gain)
   }
 
   return gain;
+}
+
+static float PnO_Absolute(float value)
+{
+  return (value >= 0.0f) ? value : -value;
+}
+
+static float PnO_ClampStepMagnitude(float step_magnitude)
+{
+  if (step_magnitude < PNO_STEP_MIN)
+  {
+    return PNO_STEP_MIN;
+  }
+
+  if (step_magnitude > PNO_STEP_MAX)
+  {
+    return PNO_STEP_MAX;
+  }
+
+  return step_magnitude;
+}
+
+static float PnO_CalculatePowerDeadband(float reference_power_w)
+{
+  const float relative_deadband_w =
+      PNO_POWER_DEADBAND_RELATIVE * PnO_Absolute(reference_power_w);
+
+  return (relative_deadband_w > PNO_POWER_DEADBAND_MIN_W)
+             ? relative_deadband_w
+             : PNO_POWER_DEADBAND_MIN_W;
+}
+
+static float PnO_CalculateTrimmedMean(void)
+{
+  float sum_w = 0.0f;
+  float minimum_w = pno_par.power_samples_w[0];
+  float maximum_w = pno_par.power_samples_w[0];
+
+  for (uint32_t index = 0U; index < PNO_POWER_SAMPLE_COUNT; index++)
+  {
+    const float sample_w = pno_par.power_samples_w[index];
+    sum_w += sample_w;
+    if (sample_w < minimum_w)
+    {
+      minimum_w = sample_w;
+    }
+    if (sample_w > maximum_w)
+    {
+      maximum_w = sample_w;
+    }
+  }
+
+  return (sum_w - minimum_w - maximum_w) /
+         (float)PNO_TRIMMED_SAMPLE_COUNT;
+}
+
+static void PnO_GrowStep(void)
+{
+  const float direction = (pno_par.step >= 0.0f) ? 1.0f : -1.0f;
+  const float grown_magnitude =
+      PnO_ClampStepMagnitude(PnO_Absolute(pno_par.step) * PNO_STEP_GROWTH);
+
+  pno_par.step = direction * grown_magnitude;
+}
+
+static MpptDutyCommand_t PnO_AdvanceGain(uint32_t now_ms)
+{
+  MpptDutyCommand_t command;
+  float candidate_gain = pno_par.reference_gain + pno_par.step;
+
+  /* Turn around before applying a command at a gain boundary. */
+  if ((candidate_gain > PNO_GAIN_MAX) || (candidate_gain < PNO_GAIN_MIN))
+  {
+    pno_par.step = -pno_par.step;
+    candidate_gain = pno_par.reference_gain + pno_par.step;
+  }
+
+  pno_par.gain = PnO_ClampGain(candidate_gain);
+  PnO_BeginSettling(now_ms);
+  command = getDutiesFromGain(pno_par.gain);
+  PnO_UpdateCommandStatus(command);
+  return command;
+}
+
+static void PnO_BeginSettling(uint32_t now_ms)
+{
+  pno_par.command_changed_ms = now_ms;
+  pno_par.last_sample_ms = UINT32_MAX;
+  pno_par.power_sample_count = 0U;
+  mppt_status.phase = MPPT_CONTROLLER_PHASE_SETTLING;
+}
+
+static void PnO_UpdateCommandStatus(MpptDutyCommand_t command)
+{
+  mppt_status.gain = pno_par.gain;
+  mppt_status.step = pno_par.step;
+  mppt_status.buck_duty = command.buck_duty;
+  mppt_status.boost_duty = command.boost_duty;
+}
+
+static bool MpptController_CommandChanged(MpptDutyCommand_t first,
+                                          MpptDutyCommand_t second)
+{
+  return (first.buck_duty != second.buck_duty) ||
+         (first.boost_duty != second.boost_duty);
+}
+
+const MpptControllerStatus_t *MpptController_GetStatus(void)
+{
+  return &mppt_status;
+}
+
+const char *MpptController_GetPhaseName(MpptControllerPhase_t phase)
+{
+  switch (phase)
+  {
+    case MPPT_CONTROLLER_PHASE_SETTLING:
+      return "SETTLE";
+
+    case MPPT_CONTROLLER_PHASE_SAMPLING:
+      return "SAMPLE";
+
+    default:
+      return "UNKNOWN";
+  }
 }

@@ -44,14 +44,18 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOF, DE___RS485_Pin|GPIO_PIN_1, GPIO_PIN_RESET);
+  /* Configure safe output levels before the pins become outputs. The two gate
+   * driver disable signals are active high and must never boot low. */
+  HAL_GPIO_WritePin(DE___RS485_GPIO_Port, DE___RS485_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(BST_DIS_GPIO_Port, BST_DIS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, RE___RS485_Pin|BST_STP_Pin|BCK_STP_Pin|BCK_DIS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, RE___RS485_Pin|BST_STP_Pin|BCK_STP_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(BCK_DIS_GPIO_Port, BCK_DIS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(DQ__Temp_GPIO_Port, DQ__Temp_Pin, GPIO_PIN_RESET);
+  /* Release the open-drain 1-Wire bus; the external pull-up holds it high. */
+  HAL_GPIO_WritePin(DQ__Temp_GPIO_Port, DQ__Temp_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pins : DE___RS485_Pin PF1 */
   GPIO_InitStruct.Pin = DE___RS485_Pin|GPIO_PIN_1;

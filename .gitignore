@@ -41,4 +41,12 @@ venv/
 # Internal working notes
 tasks/
 
+# Removed legacy/test files
+test_mppt_serial_gui.py
+tests/mppt_controller/test_mppt_controller.c
+tests/mppt_controller/stubs/main.h
+tests/mppt_controller/stubs/Measurements.h
+tests/mppt_controller/stubs/PowerStage.h
+
+
 
