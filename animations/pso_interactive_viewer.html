@@ -1,0 +1,1400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>PSO MPPT frame-by-frame viewer</title>
+  <style>
+    :root {
+      --ink: #122631;
+      --muted: #56707d;
+      --page: #eaf2f5;
+      --panel: #ffffff;
+      --line: #c7d8df;
+      --blue: #075985;
+      --blue-dark: #064563;
+      --blue-soft: #e0f1f8;
+      --green: #137a54;
+      --orange: #c46a00;
+      --shadow: 0 18px 48px rgba(18, 38, 49, 0.14);
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 12% -10%, #ffffff 0, transparent 34rem),
+        var(--page);
+      color: var(--ink);
+      font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+      line-height: 1.45;
+    }
+
+    button, select, input { font: inherit; }
+
+    .page {
+      width: min(1760px, calc(100% - 32px));
+      margin: 24px auto 36px;
+    }
+
+    .masthead {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.45rem, 2.6vw, 2.2rem);
+      letter-spacing: -0.025em;
+    }
+
+    .intro {
+      max-width: 850px;
+      margin: 6px 0 0;
+      color: var(--muted);
+    }
+
+    .offline-badge {
+      flex: none;
+      padding: 7px 11px;
+      border: 1px solid #acd7c6;
+      border-radius: 999px;
+      background: #e7f6ef;
+      color: #0b6041;
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
+    .app {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(260px, 1.3fr) minmax(220px, 1fr) auto;
+      align-items: end;
+      gap: 14px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #f8fbfc;
+    }
+
+    label.control-label {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    select {
+      width: 100%;
+      min-height: 42px;
+      padding: 8px 36px 8px 11px;
+      border: 1px solid #9db7c2;
+      border-radius: 9px;
+      background: #fff;
+      color: var(--ink);
+      text-transform: none;
+      letter-spacing: normal;
+      font-weight: 600;
+    }
+
+    .frame-state {
+      justify-self: end;
+      align-self: center;
+      min-width: 170px;
+      text-align: right;
+    }
+
+    .frame-count {
+      display: block;
+      font-variant-numeric: tabular-nums;
+      font-size: 1rem;
+      font-weight: 800;
+    }
+
+    .playback-state {
+      display: block;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    figure { margin: 0; }
+
+    .image-stage {
+      position: relative;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      background: #dce8ed;
+      isolation: isolate;
+    }
+
+    .image-stage::after {
+      content: "Loading frame…";
+      position: absolute;
+      inset: auto 14px 14px auto;
+      z-index: -1;
+      padding: 6px 9px;
+      border-radius: 7px;
+      background: rgba(18, 38, 49, 0.78);
+      color: white;
+      font-size: 0.78rem;
+      opacity: 0;
+    }
+
+    .image-stage[data-loading="true"]::after {
+      z-index: 2;
+      opacity: 1;
+    }
+
+    #frameImage {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: white;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    .load-error {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      display: grid;
+      place-content: center;
+      padding: 32px;
+      background: #fff8f0;
+      color: #7a3300;
+      text-align: center;
+      font-weight: 700;
+    }
+
+    .load-error[hidden] { display: none; }
+
+    figcaption {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      min-height: 70px;
+      padding: 11px 16px;
+      border-top: 1px solid var(--line);
+      background: #f8fbfc;
+    }
+
+    .phase-badge {
+      min-width: 92px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      color: var(--blue-dark);
+      text-align: center;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .phase-copy { min-width: 0; }
+
+    .phase-title {
+      display: block;
+      overflow: hidden;
+      font-weight: 800;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .phase-description {
+      display: block;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 0.86rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .time-readout {
+      color: var(--blue-dark);
+      font-variant-numeric: tabular-nums;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .controls {
+      display: grid;
+      gap: 13px;
+      padding: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .scrubber {
+      display: grid;
+      grid-template-columns: auto minmax(120px, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .scrubber span {
+      min-width: 2.5ch;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--blue);
+      cursor: pointer;
+    }
+
+    .control-row {
+      display: grid;
+      grid-template-columns: auto minmax(230px, 1fr) auto auto;
+      align-items: end;
+      gap: 14px;
+    }
+
+    .transport {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    button {
+      min-height: 42px;
+      padding: 8px 13px;
+      border: 1px solid #91aeba;
+      border-radius: 9px;
+      background: #fff;
+      color: var(--ink);
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    button:hover:not(:disabled) {
+      border-color: var(--blue);
+      background: #eef8fc;
+    }
+
+    button:active:not(:disabled) { transform: translateY(1px); }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.42;
+    }
+
+    #playButton {
+      min-width: 92px;
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+    }
+
+    #playButton:hover:not(:disabled) {
+      border-color: var(--blue-dark);
+      background: var(--blue-dark);
+    }
+
+    .frame-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      padding: 8px 13px;
+      border: 1px solid #91aeba;
+      border-radius: 9px;
+      background: #fff;
+      color: var(--ink);
+      font-weight: 800;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .frame-link:hover {
+      border-color: var(--blue);
+      background: #eef8fc;
+    }
+
+    button:focus-visible,
+    .frame-link:focus-visible,
+    select:focus-visible,
+    input:focus-visible,
+    #frameImage:focus-visible {
+      outline: 3px solid #f5a623;
+      outline-offset: 2px;
+    }
+
+    .compact-control { min-width: 126px; }
+
+    .loop-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 0 4px;
+      white-space: nowrap;
+      font-weight: 700;
+    }
+
+    .loop-control input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--blue);
+    }
+
+    .help-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding-top: 2px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    kbd {
+      display: inline-block;
+      min-width: 25px;
+      margin: 0 2px;
+      padding: 2px 6px;
+      border: 1px solid #b3c6ce;
+      border-bottom-width: 2px;
+      border-radius: 5px;
+      background: #fff;
+      color: var(--ink);
+      font-family: inherit;
+      font-size: 0.72rem;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    #cacheStatus { text-align: right; }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    noscript {
+      display: block;
+      margin: 16px;
+      padding: 16px;
+      border: 1px solid #e2a66b;
+      border-radius: 8px;
+      background: #fff4e8;
+      color: #723600;
+    }
+
+    @media (max-width: 900px) {
+      .masthead { align-items: flex-start; flex-direction: column; }
+      .topbar { grid-template-columns: 1fr 1fr; }
+      .frame-state { grid-column: 1 / -1; justify-self: start; text-align: left; }
+      .control-row { grid-template-columns: 1fr 1fr; }
+      .transport { grid-column: 1 / -1; }
+      figcaption { grid-template-columns: auto 1fr; }
+      .time-readout { grid-column: 2; }
+    }
+
+    @media (max-width: 580px) {
+      .page { width: min(100% - 16px, 1760px); margin-top: 10px; }
+      .topbar, .control-row { grid-template-columns: 1fr; }
+      .frame-state, .transport { grid-column: auto; }
+      .transport { display: grid; grid-template-columns: repeat(5, 1fr); }
+      .transport button { min-width: 0; padding-inline: 6px; }
+      figcaption { grid-template-columns: 1fr; }
+      .time-readout { grid-column: auto; }
+      .phase-title, .phase-description { white-space: normal; }
+      .help-row { align-items: flex-start; flex-direction: column; }
+      #cacheStatus { text-align: left; }
+    }
+
+    /* Keep the complete teaching interface inside one 16:9 presentation canvas. */
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: #c7d9e0;
+    }
+
+    .page {
+      width: min(100vw, 177.777778vh);
+      height: min(100vh, 56.25vw);
+      margin: 0;
+      padding: clamp(7px, 0.75vmin, 14px);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: clamp(5px, 0.55vmin, 10px);
+      overflow: hidden;
+    }
+
+    .masthead {
+      min-height: 0;
+      margin: 0;
+      padding: 0 2px;
+      align-items: center;
+      flex-direction: row;
+    }
+
+    h1 {
+      font-size: clamp(1.1rem, 2.35vmin, 1.8rem);
+    }
+
+    .intro {
+      max-width: none;
+      margin-top: 2px;
+      overflow: hidden;
+      font-size: clamp(0.68rem, 1.25vmin, 0.9rem);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .offline-badge {
+      padding: 5px 9px;
+      font-size: clamp(0.66rem, 1.05vmin, 0.78rem);
+    }
+
+    .app {
+      min-height: 0;
+      height: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) clamp(280px, 24%, 430px);
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    figure {
+      grid-column: 1;
+      grid-row: 1 / 3;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      background: #e4eef2;
+    }
+
+    .image-stage {
+      width: 100%;
+      height: auto;
+      flex: 0 0 auto;
+      aspect-ratio: 16 / 9;
+    }
+
+    figcaption {
+      min-height: 58px;
+      flex: 0 0 auto;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 9px;
+      padding: 8px 11px;
+    }
+
+    .phase-badge {
+      min-width: 78px;
+      padding: 5px 8px;
+      font-size: 0.67rem;
+    }
+
+    .phase-title { font-size: 0.9rem; }
+    .phase-description { font-size: 0.76rem; }
+    .time-readout { grid-column: auto; font-size: 0.82rem; }
+
+    .topbar {
+      grid-column: 2;
+      grid-row: 1;
+      grid-template-columns: 1fr;
+      align-items: stretch;
+      gap: 8px;
+      padding: 10px;
+      border-left: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .frame-state {
+      grid-column: auto;
+      justify-self: start;
+      min-width: 0;
+      text-align: left;
+    }
+
+    select { min-height: 38px; }
+
+    .controls {
+      grid-column: 2;
+      grid-row: 2;
+      min-height: 0;
+      align-content: start;
+      gap: 9px;
+      padding: 10px;
+      overflow-y: auto;
+      border-top: 0;
+      border-left: 1px solid var(--line);
+    }
+
+    .control-row {
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .transport {
+      grid-column: auto;
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .transport button {
+      min-width: 0;
+      padding-inline: 6px;
+    }
+
+    .compact-control { width: 100%; }
+    .frame-link { width: 100%; }
+
+    .help-row {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    #cacheStatus { text-align: left; }
+
+    @media (max-height: 760px) and (min-aspect-ratio: 4 / 3) {
+      .page {
+        padding: 6px;
+        gap: 4px;
+      }
+
+      .intro { display: none; }
+      h1 { font-size: 1.15rem; }
+      .offline-badge { padding: 3px 7px; font-size: 0.64rem; }
+
+      .app {
+        grid-template-columns: minmax(0, 1fr) clamp(270px, 24%, 330px);
+      }
+
+      .topbar {
+        gap: 5px;
+        padding: 7px;
+      }
+
+      label.control-label { gap: 3px; font-size: 0.64rem; }
+
+      select {
+        min-height: 32px;
+        padding-block: 4px;
+        font-size: 0.72rem;
+      }
+
+      .frame-count { font-size: 0.82rem; }
+      .playback-state { font-size: 0.66rem; }
+
+      figcaption {
+        min-height: 48px;
+        gap: 6px;
+        padding: 5px 8px;
+      }
+
+      .phase-badge { min-width: 68px; padding: 3px 6px; font-size: 0.58rem; }
+      .phase-title { font-size: 0.76rem; }
+      .phase-description { font-size: 0.64rem; }
+      .time-readout { font-size: 0.7rem; }
+
+      .controls {
+        gap: 6px;
+        padding: 7px;
+      }
+
+      .scrubber { gap: 5px; }
+      .control-row { gap: 6px; }
+      .transport { gap: 4px; }
+
+      button,
+      .frame-link {
+        min-height: 32px;
+        padding: 4px 6px;
+        font-size: 0.72rem;
+      }
+
+      #playButton { min-width: 58px; }
+      .loop-control { min-height: 32px; font-size: 0.72rem; }
+      .help-row { gap: 3px; font-size: 0.6rem; }
+      kbd { min-width: 20px; padding: 1px 4px; font-size: 0.6rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.001ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="masthead">
+      <div>
+        <h1>PSO MPPT frame-by-frame viewer</h1>
+        <p class="intro">
+          Step through each particle measurement and decision manually, or play the
+          sequence at the original teaching rate of 0.8 FPS.
+        </p>
+      </div>
+      <span class="offline-badge">Offline viewer</span>
+    </header>
+
+    <section class="app" aria-label="Interactive PSO animation viewer">
+      <div class="topbar">
+        <label class="control-label" for="animationSelect">
+          Animation
+          <select id="animationSelect">
+            <option value="timed">Timed search and final hold — 232 frames</option>
+            <option value="detailed">Detailed decision logic — 69 frames</option>
+          </select>
+        </label>
+
+        <label class="control-label" for="jumpSelect">
+          Jump to iteration / particle
+          <select id="jumpSelect">
+            <option value="">Choose an iteration or particle…</option>
+          </select>
+        </label>
+
+        <div class="frame-state" aria-live="polite">
+          <span class="frame-count" id="frameCount">Frame 1 / 232</span>
+          <span class="playback-state" id="playbackState">Paused · 3.0 FPS</span>
+        </div>
+      </div>
+
+      <figure>
+        <div class="image-stage" id="imageStage" data-loading="true">
+          <img
+            id="frameImage"
+            src="pso_interactive_frames/timed/frame_000.webp"
+            width="1536"
+            height="864"
+            tabindex="0"
+            draggable="false"
+            alt="Timed PSO animation, initialisation frame"
+            aria-describedby="phaseDescription"
+          >
+          <div class="load-error" id="loadError" hidden>
+            A frame could not be loaded. Keep this HTML file beside the
+            <code>pso_interactive_frames</code> folder.
+          </div>
+        </div>
+
+        <figcaption>
+          <span class="phase-badge" id="phaseBadge">Initialise</span>
+          <span class="phase-copy">
+            <span class="phase-title" id="phaseTitle">Initialise five-particle swarm</span>
+            <span class="phase-description" id="phaseDescription">
+              The timed PSO search is ready; no particle has been tested yet.
+            </span>
+          </span>
+          <span class="time-readout" id="timeReadout">t = 0.000 s</span>
+        </figcaption>
+      </figure>
+
+      <div class="controls">
+        <div class="scrubber">
+          <span>1</span>
+          <label class="sr-only" for="frameSlider">Animation frame</label>
+          <input id="frameSlider" type="range" min="0" max="231" step="1" value="0">
+          <span id="lastFrameNumber">232</span>
+        </div>
+
+        <div class="control-row">
+          <div class="transport" role="group" aria-label="Frame transport controls">
+            <button id="firstButton" type="button" title="First frame" aria-label="First frame">|&larr;</button>
+            <button id="previousButton" type="button" title="Previous frame (Left Arrow)" aria-label="Previous frame" aria-keyshortcuts="ArrowLeft">&larr;</button>
+            <button id="playButton" type="button" aria-keyshortcuts="Space">Play</button>
+            <button id="nextButton" type="button" title="Next frame (Right Arrow)" aria-label="Next frame" aria-keyshortcuts="ArrowRight">&rarr;</button>
+            <button id="lastButton" type="button" title="Last frame" aria-label="Last frame">&rarr;|</button>
+          </div>
+
+          <label class="control-label compact-control" for="speedSelect">
+            Playback speed
+            <select id="speedSelect">
+              <option value="0.4">0.4 FPS</option>
+              <option value="0.8">0.8 FPS</option>
+              <option value="1">1.0 FPS</option>
+              <option value="1.6">1.6 FPS</option>
+              <option value="2">2.0 FPS</option>
+              <option value="3" selected>3.0 FPS</option>
+            </select>
+          </label>
+
+          <label class="loop-control" for="loopCheckbox">
+            <input id="loopCheckbox" type="checkbox">
+            Loop playback
+          </label>
+
+          <a
+            class="frame-link"
+            id="frameLink"
+            href="pso_interactive_frames/timed/frame_000.webp"
+            target="_blank"
+            rel="noopener"
+          >Open current frame</a>
+        </div>
+
+        <div class="help-row">
+          <span>
+            Keyboard: <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> step,
+            <kbd>Space</kbd> play or pause, <kbd>Home</kbd>/<kbd>End</kbd> jump.
+          </span>
+          <span id="cacheStatus" aria-live="polite">Preparing local frames…</span>
+        </div>
+      </div>
+
+      <div id="screenReaderStatus" class="sr-only" aria-live="polite"></div>
+      <noscript>JavaScript must be enabled to use the frame controls.</noscript>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const animations = {
+        timed: {
+          name: "Timed search and final hold",
+          frameCount: 232,
+          defaultFps: 3.0,
+          folder: "timed",
+          jumps: [
+            [0, "Initialise five-particle swarm"],
+            [1, "Iteration 1 — apply particle 1"],
+            [21, "Iteration 1 — evaluate all-iterations decision"],
+            [22, "Iteration 1 — update swarm internally"],
+            [23, "Begin iteration 2 immediately"],
+            [92, "Begin iteration 5"],
+            [115, "Begin iteration 6 — search passes 100 ms"],
+            [207, "Begin final iteration 10"],
+            [224, "Final particle — apply P5"],
+            [225, "Final particle — sample and update pbest"],
+            [226, "Final particle — update internal gbest"],
+            [227, "All five particles tested — YES"],
+            [228, "All ten iterations complete — YES"],
+            [229, "PSO concluded — final gbest selected"],
+            [230, "Apply final gbest — hold begins"],
+            [231, "Final hold complete — 500 ms reached"]
+          ]
+        },
+        detailed: {
+          name: "Detailed decision logic",
+          frameCount: 69,
+          defaultFps: 0.8,
+          folder: "detailed",
+          jumps: [
+            [0, "Initialise five-particle swarm"],
+            [1, "Apply first candidate"],
+            [2, "Measure voltage, current and power"],
+            [3, "Update personal-best memory"],
+            [4, "Update global-best memory"],
+            [17, "Test final particle of generation 1"],
+            [21, "Calculate all new velocities"],
+            [22, "Move swarm synchronously"],
+            [23, "Begin generation 2"],
+            [44, "Generation 2 velocity update"],
+            [45, "Generation 2 position update"],
+            [46, "Begin final generation"],
+            [63, "Apply final particle"],
+            [66, "Complete final particle decision"],
+            [67, "Commit final gbest output"],
+            [68, "PSO complete"]
+          ]
+        }
+      };
+
+      const elements = {
+        animationSelect: document.getElementById("animationSelect"),
+        jumpSelect: document.getElementById("jumpSelect"),
+        frameCount: document.getElementById("frameCount"),
+        playbackState: document.getElementById("playbackState"),
+        imageStage: document.getElementById("imageStage"),
+        frameImage: document.getElementById("frameImage"),
+        loadError: document.getElementById("loadError"),
+        phaseBadge: document.getElementById("phaseBadge"),
+        phaseTitle: document.getElementById("phaseTitle"),
+        phaseDescription: document.getElementById("phaseDescription"),
+        timeReadout: document.getElementById("timeReadout"),
+        frameSlider: document.getElementById("frameSlider"),
+        lastFrameNumber: document.getElementById("lastFrameNumber"),
+        firstButton: document.getElementById("firstButton"),
+        previousButton: document.getElementById("previousButton"),
+        playButton: document.getElementById("playButton"),
+        nextButton: document.getElementById("nextButton"),
+        lastButton: document.getElementById("lastButton"),
+        speedSelect: document.getElementById("speedSelect"),
+        loopCheckbox: document.getElementById("loopCheckbox"),
+        frameLink: document.getElementById("frameLink"),
+        cacheStatus: document.getElementById("cacheStatus"),
+        screenReaderStatus: document.getElementById("screenReaderStatus")
+      };
+
+      const state = {
+        animationKey: "timed",
+        frameIndex: 0,
+        fps: 3.0,
+        playing: false,
+        timer: null,
+        preloadToken: 0
+      };
+
+      function currentAnimation() {
+        return animations[state.animationKey];
+      }
+
+      function framePath(animationKey, frameIndex) {
+        const frameNumber = String(frameIndex).padStart(3, "0");
+        return `pso_interactive_frames/${animations[animationKey].folder}/frame_${frameNumber}.webp`;
+      }
+
+      function detailedStage(frameIndex) {
+        const generation = Math.floor(frameIndex / 23) + 1;
+        const localIndex = frameIndex % 23;
+
+        if (localIndex === 0) {
+          return {
+            badge: "Initialise",
+            title: `Begin generation ${generation} of 3`,
+            description: generation === 1
+              ? "Randomly initialise five candidate voltages; no power values are known yet."
+              : "Use the synchronously updated particle positions from the preceding generation.",
+            time: `Teaching step ${frameIndex + 1}`
+          };
+        }
+
+        if (localIndex <= 20) {
+          const particle = Math.floor((localIndex - 1) / 4) + 1;
+          const phaseIndex = (localIndex - 1) % 4;
+          const phases = [
+            {
+              badge: "Apply",
+              title: `Generation ${generation}: apply particle ${particle} of 5`,
+              description: "Apply the candidate voltage reference and wait; measured power is still pending."
+            },
+            {
+              badge: "Measure",
+              title: `Generation ${generation}: measure particle ${particle} of 5`,
+              description: "Measure voltage and current, then calculate the candidate power P = VI."
+            },
+            {
+              badge: "pbest",
+              title: `Generation ${generation}: update particle ${particle} personal best`,
+              description: "Compare the new power with this particle’s stored personal-best memory."
+            },
+            {
+              badge: "gbest",
+              title: `Generation ${generation}: update internal global-best memory`,
+              description: "Update gbest if warranted; this intermediate memory is not an output command."
+            }
+          ];
+          return { ...phases[phaseIndex], time: `Teaching step ${frameIndex + 1}` };
+        }
+
+        if (generation < 3 && localIndex === 21) {
+          return {
+            badge: "Velocity",
+            title: `Generation ${generation}: calculate all new velocities`,
+            description: "Use one frozen swarm snapshot to update every particle velocity.",
+            time: `Teaching step ${frameIndex + 1}`
+          };
+        }
+
+        if (generation < 3 && localIndex === 22) {
+          return {
+            badge: "Move",
+            title: `Generation ${generation}: commit all new positions`,
+            description: "Move the complete swarm synchronously and start the next generation.",
+            time: `Teaching step ${frameIndex + 1}`
+          };
+        }
+
+        if (localIndex === 21) {
+          return {
+            badge: "Output",
+            title: "All generations complete — apply final gbest once",
+            description: "PSO has concluded; this is the first and only physical gbest output action.",
+            time: `Teaching step ${frameIndex + 1}`
+          };
+        }
+
+        return {
+          badge: "Complete",
+          title: "PSO decision sequence complete",
+          description: "The final gbest remains the selected output after all three illustrated generations.",
+          time: `Teaching step ${frameIndex + 1}`
+        };
+      }
+
+      function timedStage(frameIndex) {
+        if (frameIndex === 0) {
+          return {
+            badge: "Initialise",
+            title: "Initialise five-particle swarm",
+            description: "The contiguous PSO search is ready; no particle has been tested yet.",
+            time: "t = 0.000 s"
+          };
+        }
+        if (frameIndex === 230) {
+          return {
+            badge: "Output",
+            title: "Apply final gbest — 300 ms hold begins",
+            description: "All ten iteration decisions are complete; the final gbest is now the physical output.",
+            time: "t = 0.200 s"
+          };
+        }
+        if (frameIndex === 231) {
+          return {
+            badge: "Complete",
+            title: "Final gbest hold complete",
+            description: "The selected final output has remained constant for the full 300 ms hold.",
+            time: "t = 0.500 s"
+          };
+        }
+        if (frameIndex < 1 || frameIndex > 229) {
+          throw new RangeError(`Invalid timed frame ${frameIndex}`);
+        }
+
+        let iteration;
+        let withinIteration;
+        if (frameIndex <= 22) {
+          iteration = 1;
+          withinIteration = frameIndex - 1;
+        } else {
+          const laterIndex = frameIndex - 23;
+          iteration = Math.floor(laterIndex / 23) + 2;
+          const laterWithin = laterIndex % 23;
+          if (laterWithin === 0) {
+            return {
+              badge: "Start",
+              title: `Begin iteration ${iteration} of 10 with the updated swarm`,
+              description: "Use all five positions from the prior synchronous swarm move; do not re-randomise.",
+              time: `t = ${((iteration - 1) * 0.020).toFixed(3)} s`
+            };
+          }
+          withinIteration = laterWithin - 1;
+        }
+
+        const iterationEnd = iteration * 0.020;
+        if (withinIteration < 20) {
+          const particle = Math.floor(withinIteration / 4) + 1;
+          const stageIndex = withinIteration % 4;
+          const slotStart = (iteration - 1) * 0.020 + (particle - 1) * 0.004;
+          const slotEnd = slotStart + 0.004;
+          const lastParticle = particle === 5;
+          const stages = [
+            {
+              badge: "Apply",
+              title: `Iteration ${iteration} of 10 — apply particle ${particle} of 5`,
+              description: "Apply this particle voltage reference and begin the 3 ms settling budget.",
+              time: slotStart
+            },
+            {
+              badge: "Sample",
+              title: `Iteration ${iteration} of 10 — sample particle ${particle} and update pbest`,
+              description: "Complete the final 1 ms V/I average, calculate power, and update personal-best memory.",
+              time: slotEnd
+            },
+            {
+              badge: "Memory",
+              title: `Iteration ${iteration} of 10 — update internal gbest`,
+              description: "Compare the updated pbest with gbest; gbest remains internal during the search.",
+              time: slotEnd
+            },
+            {
+              badge: "Decision",
+              title: lastParticle
+                ? `Iteration ${iteration} of 10 — all five particles tested: YES`
+                : `Iteration ${iteration} of 10 — all five particles tested: NO`,
+              description: lastParticle
+                ? "Proceed to the all-iterations decision."
+                : `Follow the outward loop and apply particle ${particle + 1} immediately.`,
+              time: slotEnd
+            }
+          ];
+          const stage = stages[stageIndex];
+          return {
+            ...stage,
+            time: `t = ${stage.time.toFixed(3)} s`
+          };
+        }
+
+        if (withinIteration === 20) {
+          const complete = iteration === 10;
+          return {
+            badge: "Decision",
+            title: complete
+              ? "All ten iterations complete: YES"
+              : `All ten iterations complete after iteration ${iteration}: NO`,
+            description: complete
+              ? "Proceed to final gbest selection; do not start another swarm update."
+              : "Proceed to the synchronous velocity and position update.",
+            time: `t = ${iterationEnd.toFixed(3)} s`
+          };
+        }
+
+        if (iteration === 10) {
+          return {
+            badge: "Conclude",
+            title: "PSO concluded — final gbest selected",
+            description: "The final gbest is known; applying the one 300 ms output hold is the next state.",
+            time: "t = 0.200 s"
+          };
+        }
+        return {
+          badge: "Update",
+          title: `Iteration ${iteration} complete — update the swarm internally`,
+          description: "Update all velocities and positions from one snapshot, then begin the next iteration immediately.",
+          time: `t = ${iterationEnd.toFixed(3)} s`
+        };
+      }
+
+      function stageForCurrentFrame() {
+        return state.animationKey === "timed"
+          ? timedStage(state.frameIndex)
+          : detailedStage(state.frameIndex);
+      }
+
+      function pausePlayback() {
+        if (state.timer !== null) {
+          window.clearTimeout(state.timer);
+          state.timer = null;
+        }
+        state.playing = false;
+        updatePlaybackState();
+      }
+
+      function updatePlaybackState() {
+        elements.playButton.textContent = state.playing ? "Pause" : "Play";
+        elements.playButton.setAttribute("aria-label", state.playing ? "Pause animation" : "Play animation");
+        elements.playbackState.textContent = `${state.playing ? "Playing" : "Paused"} · ${state.fps.toFixed(1)} FPS`;
+      }
+
+      function updateJumpOptions() {
+        const animation = currentAnimation();
+        elements.jumpSelect.replaceChildren();
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Choose an iteration or particle…";
+        elements.jumpSelect.appendChild(placeholder);
+
+        const usedFrames = new Set();
+        const appendOption = (parent, frameIndex, label) => {
+          if (usedFrames.has(frameIndex)) return;
+          usedFrames.add(frameIndex);
+          const option = document.createElement("option");
+          option.value = String(frameIndex);
+          option.textContent = `Frame ${frameIndex + 1}: ${label}`;
+          parent.appendChild(option);
+        };
+
+        const keyStages = document.createElement("optgroup");
+        keyStages.label = "Key teaching stages";
+        for (const [frameIndex, label] of animation.jumps) {
+          appendOption(keyStages, frameIndex, label);
+        }
+        elements.jumpSelect.appendChild(keyStages);
+
+        if (state.animationKey === "timed") {
+          for (let iteration = 0; iteration < 10; iteration += 1) {
+            const group = document.createElement("optgroup");
+            group.label = `Iteration ${iteration + 1}`;
+            for (let particle = 0; particle < 5; particle += 1) {
+              const frameIndex = 1 + 6 * iteration + particle;
+              const elapsed = iteration * 0.020 + (particle + 1) * 0.004;
+              appendOption(
+                group,
+                frameIndex,
+                `particle ${particle + 1} measurement — t=${elapsed.toFixed(3)} s`
+              );
+            }
+            appendOption(
+              group,
+              6 + 6 * iteration,
+              iteration === 9
+                ? "search complete — final gbest selected"
+                : "iteration complete — internal swarm update"
+            );
+            if (group.children.length > 0) elements.jumpSelect.appendChild(group);
+          }
+        } else {
+          for (let generation = 0; generation < 3; generation += 1) {
+            const group = document.createElement("optgroup");
+            const start = 23 * generation;
+            group.label = `Generation ${generation + 1}`;
+            appendOption(group, start, `begin generation ${generation + 1}`);
+            for (let particle = 0; particle < 5; particle += 1) {
+              appendOption(
+                group,
+                start + 1 + 4 * particle,
+                `particle ${particle + 1} — apply candidate`
+              );
+            }
+            appendOption(
+              group,
+              start + 21,
+              generation === 2 ? "apply final gbest output" : "calculate new velocities"
+            );
+            appendOption(
+              group,
+              start + 22,
+              generation === 2 ? "PSO complete" : "commit new positions"
+            );
+            if (group.children.length > 0) elements.jumpSelect.appendChild(group);
+          }
+        }
+      }
+
+      function updateHash() {
+        try {
+          window.history.replaceState(null, "", `#${state.animationKey}/${state.frameIndex}`);
+        } catch (_error) {
+          // Some locked-down file viewers disallow history changes; controls still work.
+        }
+      }
+
+      function preloadNeighbours() {
+        const animation = currentAnimation();
+        for (const offset of [-2, -1, 1, 2]) {
+          const index = state.frameIndex + offset;
+          if (index >= 0 && index < animation.frameCount) {
+            const image = new Image();
+            image.src = framePath(state.animationKey, index);
+          }
+        }
+      }
+
+      function renderFrame({ announce = true, updateLocation = true } = {}) {
+        const animation = currentAnimation();
+        const lastIndex = animation.frameCount - 1;
+        state.frameIndex = Math.max(0, Math.min(state.frameIndex, lastIndex));
+        const stage = stageForCurrentFrame();
+        const source = framePath(state.animationKey, state.frameIndex);
+
+        elements.imageStage.dataset.loading = "true";
+        elements.loadError.hidden = true;
+        elements.frameImage.src = source;
+        elements.frameImage.alt = `${animation.name}, frame ${state.frameIndex + 1} of ${animation.frameCount}: ${stage.title}`;
+        elements.frameLink.href = source;
+        elements.frameSlider.max = String(lastIndex);
+        elements.frameSlider.value = String(state.frameIndex);
+        elements.lastFrameNumber.textContent = String(animation.frameCount);
+        elements.frameCount.textContent = `Frame ${state.frameIndex + 1} / ${animation.frameCount}`;
+        elements.phaseBadge.textContent = stage.badge;
+        elements.phaseTitle.textContent = stage.title;
+        elements.phaseDescription.textContent = stage.description;
+        elements.timeReadout.textContent = stage.time;
+        elements.firstButton.disabled = state.frameIndex === 0;
+        elements.previousButton.disabled = state.frameIndex === 0;
+        elements.nextButton.disabled = state.frameIndex === lastIndex;
+        elements.lastButton.disabled = state.frameIndex === lastIndex;
+        elements.jumpSelect.value = Array.from(elements.jumpSelect.options)
+          .some((option) => option.value === String(state.frameIndex))
+          ? String(state.frameIndex)
+          : "";
+
+        if (announce) {
+          elements.screenReaderStatus.textContent = `Frame ${state.frameIndex + 1} of ${animation.frameCount}. ${stage.title}. ${stage.time}.`;
+        }
+        if (updateLocation) updateHash();
+        preloadNeighbours();
+      }
+
+      function setFrame(frameIndex, manual = true) {
+        if (manual) pausePlayback();
+        state.frameIndex = frameIndex;
+        renderFrame();
+      }
+
+      function scheduleNextFrame() {
+        if (!state.playing) return;
+        state.timer = window.setTimeout(() => {
+          const animation = currentAnimation();
+          const lastIndex = animation.frameCount - 1;
+          if (state.frameIndex < lastIndex) {
+            state.frameIndex += 1;
+            renderFrame();
+          } else if (elements.loopCheckbox.checked) {
+            state.frameIndex = 0;
+            renderFrame();
+          } else {
+            pausePlayback();
+            return;
+          }
+          scheduleNextFrame();
+        }, 1000 / state.fps);
+      }
+
+      function playAnimation() {
+        if (state.playing) {
+          pausePlayback();
+          return;
+        }
+        const lastIndex = currentAnimation().frameCount - 1;
+        if (state.frameIndex === lastIndex && !elements.loopCheckbox.checked) {
+          state.frameIndex = 0;
+          renderFrame();
+        }
+        state.playing = true;
+        updatePlaybackState();
+        scheduleNextFrame();
+      }
+
+      async function preloadAnimation(animationKey) {
+        const token = ++state.preloadToken;
+        const animation = animations[animationKey];
+        let loaded = 0;
+        let failed = 0;
+        elements.cacheStatus.textContent = `Caching 0 / ${animation.frameCount} local frames…`;
+
+        async function loadOne(index) {
+          await new Promise((resolve) => {
+            const image = new Image();
+            image.onload = () => { loaded += 1; resolve(); };
+            image.onerror = () => { failed += 1; resolve(); };
+            image.src = framePath(animationKey, index);
+          });
+        }
+
+        for (let start = 0; start < animation.frameCount; start += 8) {
+          if (token !== state.preloadToken) return;
+          const batch = [];
+          for (let index = start; index < Math.min(start + 8, animation.frameCount); index += 1) {
+            batch.push(loadOne(index));
+          }
+          await Promise.all(batch);
+          if (token !== state.preloadToken) return;
+          elements.cacheStatus.textContent = `Caching ${loaded} / ${animation.frameCount} local frames…`;
+        }
+
+        elements.cacheStatus.textContent = failed === 0
+          ? `All ${loaded} local frames ready`
+          : `${loaded} frames ready; ${failed} could not be loaded`;
+      }
+
+      function switchAnimation(animationKey, frameIndex = 0) {
+        pausePlayback();
+        state.animationKey = animationKey;
+        state.frameIndex = frameIndex;
+        state.fps = animations[animationKey].defaultFps;
+        elements.speedSelect.value = String(state.fps);
+        elements.animationSelect.value = animationKey;
+        updateJumpOptions();
+        updatePlaybackState();
+        renderFrame();
+        preloadAnimation(animationKey);
+      }
+
+      function parseInitialLocation() {
+        const [animationKey, rawFrame] = window.location.hash.slice(1).split("/");
+        if (!animations[animationKey]) return;
+        const frameIndex = Number.parseInt(rawFrame, 10);
+        state.animationKey = animationKey;
+        if (Number.isFinite(frameIndex)) {
+          state.frameIndex = Math.max(0, Math.min(frameIndex, animations[animationKey].frameCount - 1));
+        }
+      }
+
+      elements.frameImage.addEventListener("load", () => {
+        elements.imageStage.dataset.loading = "false";
+        elements.loadError.hidden = true;
+      });
+
+      elements.frameImage.addEventListener("error", () => {
+        elements.imageStage.dataset.loading = "false";
+        elements.loadError.hidden = false;
+      });
+
+      elements.animationSelect.addEventListener("change", (event) => {
+        switchAnimation(event.target.value, 0);
+      });
+
+      elements.jumpSelect.addEventListener("change", (event) => {
+        if (event.target.value !== "") setFrame(Number(event.target.value));
+      });
+
+      elements.frameSlider.addEventListener("input", (event) => {
+        setFrame(Number(event.target.value));
+      });
+
+      elements.firstButton.addEventListener("click", () => setFrame(0));
+      elements.previousButton.addEventListener("click", () => setFrame(state.frameIndex - 1));
+      elements.playButton.addEventListener("click", playAnimation);
+      elements.nextButton.addEventListener("click", () => setFrame(state.frameIndex + 1));
+      elements.lastButton.addEventListener("click", () => setFrame(currentAnimation().frameCount - 1));
+
+      elements.speedSelect.addEventListener("change", (event) => {
+        state.fps = Number(event.target.value);
+        const wasPlaying = state.playing;
+        pausePlayback();
+        if (wasPlaying) {
+          state.playing = true;
+          updatePlaybackState();
+          scheduleNextFrame();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        const tagName = event.target.tagName;
+        if (["INPUT", "SELECT", "BUTTON", "A", "TEXTAREA"].includes(tagName)) return;
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          setFrame(state.frameIndex - 1);
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          setFrame(state.frameIndex + 1);
+        } else if (event.key === " ") {
+          event.preventDefault();
+          playAnimation();
+        } else if (event.key === "Home") {
+          event.preventDefault();
+          setFrame(0);
+        } else if (event.key === "End") {
+          event.preventDefault();
+          setFrame(currentAnimation().frameCount - 1);
+        }
+      });
+
+      parseInitialLocation();
+      state.fps = currentAnimation().defaultFps;
+      elements.speedSelect.value = String(state.fps);
+      elements.animationSelect.value = state.animationKey;
+      updateJumpOptions();
+      updatePlaybackState();
+      renderFrame({ announce: false });
+      preloadAnimation(state.animationKey);
+    })();
+  </script>
+</body>
+</html>
