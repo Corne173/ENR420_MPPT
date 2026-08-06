@@ -18,7 +18,8 @@ This repository contains the ENR420 student guide, a preconfigured STM32CubeIDE 
 | Resource | Description |
 | --- | --- |
 | [MPPT Circuit Student Implementation Guide](ENR420%20-%20MPPT%20Implemetation%20Guide.pdf) | Main PDF guide for the project. Start here. |
-| [Practical 2 PV and MPPT Simulation Guide](ENR420_Practical_2_PV_MPPT_Simulation_Guide.pdf) | Concise visual walkthrough from four datasheet values through the C1-C2 empirical PV curve to the supplied P&O and PSO teaching simulations. |
+| [Practical 2 PV and MPPT Simulation Guide](ENR420_Practical_2_PV_MPPT_Simulation_Guide.pdf) | Takes students from the Yingli module data through the C1-C2 PV model and introductory P&O and PSO examples to the assessed two-module PSO simulation, individual demonstration, and report. |
+| [Prescribed reading](Prescribed%20reading/) | PV source data and selected readings on modelling, MPPT methods, and converter-control design. |
 | [Interactive PSO MPPT animation viewer](https://corne173.github.io/ENR420_MPPT/animations/pso_interactive_viewer.html) | Explore the PSO search frame by frame, switch between timed and detailed views, and use the playback and step controls. |
 | [MPPT firmware](MPPT%20firmware/) | STM32CubeIDE firmware project for the MPPT controller. |
 | [STM32F reference manual chapters](Manual%20-%20STM32F/) | Split STM32F303 reference-manual sections for easier lookup. |
@@ -41,17 +42,25 @@ Sensor connectors are low-voltage signal connections. They are separate from the
 
 All four DS18B20 probes share J8 in parallel. The complete 1-Wire bus needs exactly one 4.7 kΩ pull-up from `DQ` to `3V3`: first verify that R20 is populated with a suitable value, and add one external resistor only if it is absent or unsuitable. The guide explains how to identify and label the discovery-order channels `Temp0`–`Temp3`.
 
-## Further Reading
+## Prescribed Reading
 
-Students who want more background on four-switch buck-boost converter control strategies may find this review useful:
+| Reading | Purpose |
+| --- | --- |
+| [Boost Converter with Combined Control Loop for a Stand-Alone Photovoltaic Battery Charge System](https://orbit.dtu.dk/en/publications/boost-converter-with-combined-control-loop-for-a-standalone-photovoltaic-battery-charge-system%283b9ee5a7-2ee7-4a0a-b8a9-c26c3844e46e%29.html) | Develops an outer PV-voltage loop with a faster inner inductor-current loop, showing the model-based converter control needed when reference tracking and defined dynamics matter. |
+| [Yingli YLM-J 3.0 PRO module datasheet](Prescribed%20reading/Yingli_YLM-J_3.0_PRO_YL530-555D-49e_Datasheet_EN_V03.pdf) | Provides the STC and NOCT electrical data, temperature coefficients, and operating limits used to parameterise and check the Practical 2 PV model. Use the YL550D-49e 1/2 values. |
+| [Issues in Design of Maximum-Power-Point-Tracking Control - Power Electronics Perspective](https://trepo.tuni.fi/handle/10024/214366) | Explains how converter dynamics and operating region constrain practical perturb-based MPPT design, including settling time, perturbation rate and step size, irradiance changes, measurement noise, and conduction mode. |
 
-- Lin, G.; Li, Y.; Zhang, Z. "A Review of Control Strategies for Four-Switch Buck-Boost Converters." *World Electric Vehicle Journal* 2025, 16(6), 315. <https://doi.org/10.3390/wevj16060315>
+The supplied ENR420 firmware uses measured PV power to hill-climb a commanded converter gain and then maps that gain to the buck and boost PWM duty ratios. It does not implement an inner PID voltage- or current-regulation loop. Projects with specified voltage or current references, engineering-unit limits, or transient-response requirements need additional reference-tracking control and protection design; those functions are outside the scope of this teaching implementation.
+
+For additional background on four-switch buck-boost converter control strategies, see Lin, G.; Li, Y.; Zhang, Z. "A Review of Control Strategies for Four-Switch Buck-Boost Converters." *World Electric Vehicle Journal* 2025, 16(6), 315. <https://doi.org/10.3390/wevj16060315>
 
 ## Repository Layout
 
 ```text
 .
 |-- ENR420 - MPPT Implemetation Guide.pdf   # Compiled student guide
+|-- ENR420_Practical_2_PV_MPPT_Simulation_Guide.pdf  # Practical 2 guide
+|-- Prescribed reading/                     # Papers and PV module datasheet
 |-- MPPT firmware/                          # STM32CubeIDE firmware project
 |-- Manual - STM32F/                        # STM32 reference manual split by section
 |-- Four_switch_buck_boost.psimsch          # Optional PSIM converter simulation schematic
