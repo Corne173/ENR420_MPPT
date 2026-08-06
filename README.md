@@ -18,6 +18,7 @@ This repository contains the ENR420 student guide, a preconfigured STM32CubeIDE 
 | Resource | Description |
 | --- | --- |
 | [MPPT Circuit Student Implementation Guide](ENR420%20-%20MPPT%20Implemetation%20Guide.pdf) | Main PDF guide for the project. Start here. |
+| [Practical 2 PV and MPPT Simulation Guide](ENR420_Practical_2_PV_MPPT_Simulation_Guide.pdf) | Concise visual walkthrough from four datasheet values through the C1-C2 empirical PV curve to the supplied P&O and PSO teaching simulations. |
 | [MPPT firmware](MPPT%20firmware/) | STM32CubeIDE firmware project for the MPPT controller. |
 | [STM32F reference manual chapters](Manual%20-%20STM32F/) | Split STM32F303 reference-manual sections for easier lookup. |
 | [Serial monitor GUI](mppt_serial_gui.py) | Optional Python helper for monitoring serial data from the controller. |
